@@ -3,6 +3,9 @@ import pandas as pd
 import numpy as np
 from io import BytesIO
 import openai
+import openpyxl
+from openpyxl.styles import PatternFill, Font, Color, Border, Side, Alignment
+from openpyxl.formatting.rule import ColorScaleRule
 
 # Streamlit app configuration
 st.set_page_config(page_title="Keyword Ranking Analysis", layout="wide")
@@ -336,12 +339,99 @@ if uploaded_files and target_domain:
     else:
         st.warning("Provide your OpenAI API key to generate strategic insights.")
 
-    # Export to Excel
+# Export to Excel with styling
     st.subheader("Export Data")
     if st.button("Download Excel"):
         buffer = BytesIO()
         with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+            # Write the DataFrame
             filtered_df.to_excel(writer, index=False, sheet_name="Rankings")
+            
+            # Get the workbook and worksheet
+            workbook = writer.book
+            worksheet = writer.sheets["Rankings"]
+            
+            # Define styles
+            from openpyxl.styles import PatternFill, Font, Color, Border, Side, Alignment
+            from openpyxl.formatting.rule import ColorScaleRule
+            
+            # Header style
+            header_fill = PatternFill(start_color="2C3E50", end_color="2C3E50", fill_type="solid")
+            header_font = Font(color="FFFFFF", bold=True)
+            
+            # Cell border
+            thin_border = Border(
+                left=Side(style='thin', color='DEE2E6'),
+                right=Side(style='thin', color='DEE2E6'),
+                top=Side(style='thin', color='DEE2E6'),
+                bottom=Side(style='thin', color='DEE2E6')
+            )
+            
+            # Apply header styling
+            for cell in worksheet[1]:
+                cell.fill = header_fill
+                cell.font = header_font
+                cell.border = thin_border
+                cell.alignment = Alignment(horizontal='left')
+            
+            # Get column letters for rank columns
+            rank_columns = [col for col in filtered_df.columns if 'Rank' in col]
+            rank_column_letters = []
+            for col in rank_columns:
+                col_idx = filtered_df.columns.get_loc(col) + 1  # +1 because Excel is 1-based
+                rank_column_letters.append(openpyxl.utils.get_column_letter(col_idx))
+            
+            # Apply conditional formatting to rank columns
+            for col_letter in rank_column_letters:
+                # Color scale for ranks (excluding 100)
+                worksheet.conditional_formatting.add(
+                    f'{col_letter}2:{col_letter}{len(filtered_df) + 1}',
+                    ColorScaleRule(
+                        start_type='num',
+                        start_value=1,
+                        start_color='63BE7B',  # Green
+                        mid_type='num',
+                        mid_value=15,
+                        mid_color='FFEB84',  # Yellow
+                        end_type='num',
+                        end_value=30,
+                        end_color='F8696B'  # Red
+                    )
+                )
+            
+            # Format number columns
+            for row in worksheet.iter_rows(min_row=2):
+                for cell in row:
+                    cell.border = thin_border
+                    cell.alignment = Alignment(horizontal='left')
+                    
+                    # Format Search Volume with thousands separator
+                    if openpyxl.utils.get_column_letter(cell.column) == openpyxl.utils.get_column_letter(filtered_df.columns.get_loc('Search Volume') + 1):
+                        cell.number_format = '#,##0'
+                    
+                    # Format rank columns as integers
+                    if openpyxl.utils.get_column_letter(cell.column) in rank_column_letters:
+                        cell.number_format = '0'
+            
+            # Set column widths
+            for idx, col in enumerate(filtered_df.columns):
+                column_letter = openpyxl.utils.get_column_letter(idx + 1)
+                if 'URL' in col:
+                    worksheet.column_dimensions[column_letter].width = 50
+                elif 'Keyword' in col:
+                    worksheet.column_dimensions[column_letter].width = 30
+                else:
+                    worksheet.column_dimensions[column_letter].width = 15
+            
+            # Alternate row colors
+            for row in range(2, len(filtered_df) + 2):  # Start from row 2 (after header)
+                if row % 2 == 0:  # Even rows
+                    for cell in worksheet[row]:
+                        cell.fill = PatternFill(start_color="F8F9FA", end_color="F8F9FA", fill_type="solid")
+            
+            # Freeze header row
+            worksheet.freeze_panes = 'A2'
+        
         buffer.seek(0)
         st.download_button(
             label="Download Excel File",
