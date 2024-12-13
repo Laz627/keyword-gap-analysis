@@ -85,7 +85,7 @@ def process_competitor_data(data_frames, target_domain):
         
         # Pad competitor data if needed
         while len(comp_ranks) < len(data_frames) - 1:
-            comp_ranks.append(100)  # Use 100 instead of None
+            comp_ranks.append(100)
             comp_urls.append(None)
             
         competitor_ranks.append(comp_ranks)
@@ -102,7 +102,6 @@ def process_competitor_data(data_frames, target_domain):
     # Add competitor rank columns and convert to whole numbers
     for i in range(len(data_frames) - 1):
         comp_ranks = [ranks[i] if ranks else 100 for ranks in competitor_ranks]
-        # Convert to pandas Series before processing
         comp_ranks_series = pd.Series(comp_ranks)
         final_df[f'Competitor {i+1} Rank'] = pd.to_numeric(comp_ranks_series, errors='coerce').fillna(100).astype(int)
     
@@ -120,20 +119,47 @@ def calculate_average_rank(series):
         return "N/A"
     return round(valid_ranks.mean(), 2)
 
-if uploaded_files and target_domain:
+def generate_recommendations(row):
+    """Generate recommendations based on ranking positions"""
+    target_rank = row['Target Rank']
+    competitor_ranks = [row[col] for col in row.index if 'Competitor' in col and 'Rank' in col]
+    competitor_ranks = [r for r in competitor_ranks if r != 100]  # Exclude non-ranking positions
+    
+    if target_rank == 100:
+        return "Create New"
+    elif not competitor_ranks or target_rank < min(competitor_ranks):
+        return "Defend"
+    elif target_rank <= 20:
+        return "Optimize"
+    else:
+        return "Create New"
+
+    if uploaded_files and target_domain:
     # Process the uploaded files
     data_frames = [pd.read_csv(file) for file in uploaded_files]
     
     # Combine competitor data side by side
     merged_df = process_competitor_data(data_frames, target_domain)
     
+    # Add recommendations
+    merged_df['Recommendation'] = merged_df.apply(generate_recommendations, axis=1)
+    
     # Display filters
     st.subheader("Filters")
-    keyword_filter = st.text_input("Filter by keyword:")
+    col1, col2 = st.columns(2)
+    with col1:
+        keyword_filter = st.text_input("Filter by keyword:")
+    with col2:
+        recommendation_filter = st.selectbox(
+            "Filter by recommendation:",
+            ["All", "Defend", "Optimize", "Create New"]
+        )
     
     filtered_df = merged_df.copy()
     if keyword_filter:
         filtered_df = filtered_df[filtered_df["Keyword"].str.contains(keyword_filter, case=False, na=False)]
+    if recommendation_filter != "All":
+        filtered_df = filtered_df["Recommendation"] == recommendation_filter]
 
     # Check if filtered DataFrame is empty
     if filtered_df.empty:
@@ -180,58 +206,102 @@ if uploaded_files and target_domain:
         # Fallback to displaying unstyled DataFrame
         st.dataframe(display_df, use_container_width=True)
 
-    # Summary statistics
+    # Summary statistics with recommendations
     st.subheader("Summary Statistics")
     summary_stats = pd.DataFrame({
-        'Metric': ['Average Rank (excluding N/A)', 'Keywords in Top 10', 'Total Keywords', 'Not Ranking (N/A)'],
+        'Metric': [
+            'Average Rank (excluding N/A)', 
+            'Keywords in Top 10', 
+            'Total Keywords', 
+            'Not Ranking (N/A)',
+            'Defend Keywords',
+            'Optimize Keywords',
+            'Create New Keywords'
+        ],
         'Target': [
             calculate_average_rank(filtered_df['Target Rank']),
             len(filtered_df[filtered_df['Target Rank'] <= 10]),
             len(filtered_df),
-            len(filtered_df[filtered_df['Target Rank'] == 100])
+            len(filtered_df[filtered_df['Target Rank'] == 100]),
+            len(filtered_df[filtered_df['Recommendation'] == 'Defend']),
+            len(filtered_df[filtered_df['Recommendation'] == 'Optimize']),
+            len(filtered_df[filtered_df['Recommendation'] == 'Create New'])
         ]
     })
     
-    # Add competitor stats
-    for i in range(1, len(data_frames)):
-        comp_rank_col = f'Competitor {i} Rank'
-        if comp_rank_col in filtered_df.columns:
-            comp_ranks = filtered_df[comp_rank_col].fillna(100).astype(int)
-            summary_stats[f'Competitor {i}'] = [
-                calculate_average_rank(comp_ranks),
-                len(comp_ranks[comp_ranks <= 10]),
-                len(filtered_df),
-                len(comp_ranks[comp_ranks == 100])
-            ]
-    
     st.dataframe(summary_stats)
 
-    # Summary insights using OpenAI
-    st.subheader("Summary Insights")
+    # Enhanced OpenAI insights
+    st.subheader("Strategic Insights")
     api_key = st.sidebar.text_input("Enter your OpenAI API key", type="password")
     if api_key:
-        if st.button("Generate Insights"):
+        if st.button("Generate Strategic Insights"):
             openai.api_key = api_key
+            
+            # Prepare detailed data analysis
+            defend_keywords = filtered_df[filtered_df['Recommendation'] == 'Defend']
+            optimize_keywords = filtered_df[filtered_df['Recommendation'] == 'Optimize']
+            create_keywords = filtered_df[filtered_df['Recommendation'] == 'Create New']
+            
+            top_defend = defend_keywords.nsmallest(5, 'Target Rank')[['Keyword', 'Target Rank']].to_dict('records')
+            top_optimize = optimize_keywords.nsmallest(5, 'Target Rank')[['Keyword', 'Target Rank']].to_dict('records')
+            
             summary_prompt = f"""
-            You are analyzing SEO keyword ranking data for the target domain '{target_domain}'. 
-            Provide a summary of strengths, gaps, and opportunities based on the data. Highlight major optimization areas.
+            As an SEO strategist, analyze this keyword ranking data for {target_domain}:
+
+            Current Position:
+            - Ranking for {len(filtered_df[filtered_df['Target Rank'] != 100])} out of {len(filtered_df)} total keywords
+            - {len(filtered_df[filtered_df['Target Rank'] <= 10])} keywords in top 10 positions
+            - Average ranking position: {calculate_average_rank(filtered_df['Target Rank'])}
+
+            Opportunity Breakdown:
+            1. DEFEND ({len(defend_keywords)} keywords):
+            - Top performing keywords to protect: {top_defend}
+            
+            2. OPTIMIZE ({len(optimize_keywords)} keywords):
+            - Priority optimization targets: {top_optimize}
+            
+            3. CREATE NEW ({len(create_keywords)} keywords):
+            - {len(create_keywords)} unranked or low-ranking opportunities
+
+            Provide a strategic analysis with:
+            1. IMMEDIATE ACTIONS (Next 30 days):
+            - Specific, high-priority optimization targets
+            - Critical content defense strategies
+            - Quick-win opportunities
+            
+            2. COMPETITIVE ADVANTAGES:
+            - Areas where {target_domain} outperforms competitors
+            - Unique ranking opportunities
+            
+            3. CONTENT GAPS:
+            - Priority topics for new content
+            - Specific keyword clusters to target
+            
+            4. STRATEGIC RECOMMENDATIONS:
+            - Concrete steps to improve rankings
+            - Resource allocation priorities
+            - Risk mitigation strategies
+            
+            Focus on actionable insights that can drive immediate impact while building long-term SEO strength.
             """
+            
             try:
                 response = openai.ChatCompletion.create(
-                    model="gpt-4",
+                    model="gpt-4o",
                     messages=[
-                        {"role": "system", "content": "You are a helpful SEO strategist."},
+                        {"role": "system", "content": "You are an expert SEO strategist providing actionable insights and specific recommendations."},
                         {"role": "user", "content": summary_prompt}
                     ],
                     temperature=0.7,
-                    max_tokens=1000
+                    max_tokens=4000
                 )
                 insights = response.choices[0].message.content
-                st.write(insights)
+                st.markdown(insights)
             except Exception as e:
                 st.error(f"Error generating insights: {e}")
     else:
-        st.warning("Provide your OpenAI API key to generate insights.")
+        st.warning("Provide your OpenAI API key to generate strategic insights.")
 
     # Export to Excel
     st.subheader("Export Data")
