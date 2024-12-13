@@ -47,10 +47,10 @@ def process_competitor_data(data_frames, target_domain):
     for keyword in combined_df['Keyword']:
         keyword_data = []
         for df in data_frames:
-            mask = df['Keyword'] == keyword
-            if mask.any():
-                url = df.loc[mask, 'URL'].iloc[0]
-                rank = df.loc[mask, 'Rank'].iloc[0]
+            keyword_rows = df[df['Keyword'] == keyword]
+            if not keyword_rows.empty:
+                url = keyword_rows['URL'].iloc[0]
+                rank = keyword_rows['Rank'].iloc[0]
                 keyword_data.append((url, rank))
             else:
                 keyword_data.append((None, None))
@@ -59,12 +59,14 @@ def process_competitor_data(data_frames, target_domain):
         target_found = False
         target_rank = 100  # Default to 100 if not found
         target_url = None
+        target_index = None
         
-        for url, rank in keyword_data:
+        for i, (url, rank) in enumerate(keyword_data):
             if url and target_domain.lower() in str(url).lower():
                 target_found = True
                 target_rank = rank
                 target_url = url
+                target_index = i
                 break
         
         target_ranks.append(target_rank)
@@ -73,8 +75,8 @@ def process_competitor_data(data_frames, target_domain):
         # Collect competitor data (excluding target domain)
         comp_ranks = []
         comp_urls = []
-        for url, rank in keyword_data:
-            if url and (not target_domain.lower() in str(url).lower()):
+        for i, (url, rank) in enumerate(keyword_data):
+            if i != target_index and url is not None:  # Only include non-target data
                 comp_ranks.append(rank)
                 comp_urls.append(url)
         
