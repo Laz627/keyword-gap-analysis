@@ -1,6 +1,6 @@
 streamlit
 pandas
 numpy
-openai
+openai==0.28.0
 openpyxl
 matplotlib
