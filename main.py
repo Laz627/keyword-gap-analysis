@@ -4,8 +4,7 @@ import numpy as np
 from io import BytesIO
 import openpyxl
 from openpyxl.styles import PatternFill, Font, Color, Border, Side, Alignment
-from openpyxl.formatting.rule import ColorScaleRule
-from openpyxl.formatting.rule import CellIsRule
+from openpyxl.formatting.rule import ColorScaleRule, CellIsRule
 
 # Streamlit app configuration
 st.set_page_config(page_title="Keyword Ranking Analysis", layout="wide")
@@ -114,140 +113,7 @@ def process_competitor_data(data_frames, target_domain):
     
     return final_df
 
-def calculate_average_rank(series):
-    """Calculate average rank excluding 100 values (which represent N/A)"""
-    valid_ranks = series[series != 100]
-    if len(valid_ranks) == 0:
-        return "N/A"
-    return int(round(valid_ranks.mean(), 0))  # Round to whole number
-    
-def generate_recommendations(row):
-    """Generate recommendations based on ranking positions"""
-    target_rank = row['Target Rank']
-    competitor_ranks = [row[col] for col in row.index if 'Competitor' in col and 'Rank' in col]
-    competitor_ranks = [r for r in competitor_ranks if r != 100]  # Exclude non-ranking positions
-    
-    if target_rank == 100:
-        return "Create New"
-    elif competitor_ranks:  # If there are competing rankings
-        best_competitor_rank = min(competitor_ranks)
-        if target_rank > best_competitor_rank:  # If any competitor ranks better
-            if target_rank <= 20:
-                return "Optimize"
-            elif target_rank <= 50:
-                return "Larger Adjustments"
-            else:
-                return "Create New"
-        else:
-            return "Defend"
-    else:  # If no competitors are ranking
-        return "Defend"
-
-def get_top_keywords_by_category(df, domain_type='target'):
-    """Get top 50 keywords sorted by rank then search volume"""
-    if domain_type == 'target':
-        # For target domain, sort by rank then search volume within each recommendation category
-        defend_kw = df[df['Recommendation'] == 'Defend'].sort_values(
-            by=['Target Rank', 'Search Volume'], 
-            ascending=[True, False]  # Ascending for rank (better ranks first), descending for search volume
-        ).head(50)[['Keyword', 'Search Volume', 'Target Rank']]
-        
-        optimize_kw = df[df['Recommendation'] == 'Optimize'].sort_values(
-            by=['Target Rank', 'Search Volume'], 
-            ascending=[True, False]
-        ).head(50)[['Keyword', 'Search Volume', 'Target Rank']]
-        
-        larger_adjust_kw = df[df['Recommendation'] == 'Larger Adjustments'].sort_values(
-            by=['Target Rank', 'Search Volume'], 
-            ascending=[True, False]
-        ).head(50)[['Keyword', 'Search Volume', 'Target Rank']]
-        
-        create_kw = df[df['Recommendation'] == 'Create New'].sort_values(
-            by='Search Volume', ascending=False  # Only search volume for Create New since all ranks are 100
-        ).head(50)[['Keyword', 'Search Volume', 'Target Rank']]
-        
-        return {
-            'Defend Keywords': defend_kw,
-            'Optimize Keywords': optimize_kw,
-            'Larger Adjustments Keywords': larger_adjust_kw,
-            'Create New Keywords': create_kw
-        }
-    else:
-        # For competitors, same logic as before
-        comp_rank_col = f'{domain_type} Rank'
-        return df[df[comp_rank_col] != 100].sort_values(
-            by=[comp_rank_col, 'Search Volume'],
-            ascending=[True, False]
-        ).head(50)[['Keyword', 'Search Volume', comp_rank_col]]
-
-# After filtering
-    filtered_df = merged_df.copy()
-    if keyword_filter:
-        filtered_df = filtered_df[filtered_df["Keyword"].str.contains(keyword_filter, case=False, na=False)]
-    if recommendation_filter != "All":
-        filtered_df = filtered_df[filtered_df["Recommendation"] == recommendation_filter]
-
-    # Sort the entire DataFrame by Search Volume
-    filtered_df = filtered_df.sort_values(by='Search Volume', ascending=False)
-
-    # Check if filtered DataFrame is empty
-    if filtered_df.empty:
-        st.warning("No data to display after applying filters.")
-        st.stop()
-        
-        # Create styler object
-        styler = display_df.style
-        
-        # Define custom CSS properties
-        styler.set_properties(**{
-            'background-color': '#f5f5f5',
-            'color': '#333333',
-            'border': '1px solid #e0e0e0',
-            'padding': '8px',
-            'text-align': 'left'
-        })
-        
-        # Apply background gradient only to rank columns (excluding 100s)
-        rank_columns = [col for col in display_df.columns if 'Rank' in col]
-        for col in rank_columns:
-            mask = display_df[col] != 100
-            styler.background_gradient(
-                cmap='RdYlGn_r',
-                vmin=1,
-                vmax=30,
-                subset=pd.IndexSlice[mask, col],
-                text_color_threshold=0.7
-            )
-        
-        # Format columns
-        format_dict = {
-            'Search Volume': '{:,.0f}',  # Add thousands separator
-            **{col: '{:.0f}' for col in rank_columns}  # Format rank columns as integers
-        }
-        styler.format(format_dict)
-        
-        # Add header styling
-        styler.set_table_styles([
-            {'selector': 'thead th', 
-             'props': [('background-color', '#2c3e50'), 
-                      ('color', 'white'),
-                      ('font-weight', 'bold'),
-                      ('padding', '12px')]},
-            {'selector': 'tbody tr:nth-of-type(even)',
-             'props': [('background-color', '#f8f9fa')]},
-            {'selector': 'td', 
-             'props': [('padding', '8px'),
-                      ('border', '1px solid #dee2e6')]}
-        ])
-        
-        # Display the styled DataFrame
-        st.dataframe(styler, use_container_width=True, height=600)
-    
-    except Exception as e:
-        st.error(f"Error applying styling: {str(e)}")
-        st.dataframe(filtered_df, use_container_width=True)
-
-    # Summary statistics
+# Summary statistics
     st.subheader("Summary Statistics")
     summary_stats = pd.DataFrame({
         'Metric': [
@@ -281,20 +147,16 @@ def get_top_keywords_by_category(df, domain_type='target'):
                 len(filtered_df[filtered_df[comp_col] <= 10]),
                 len(filtered_df[filtered_df[comp_col] <= 3]),
                 len(filtered_df[filtered_df[comp_col] == 100]),
-                '-',  # Defend Keywords
-                '-',  # Optimize Keywords
-                '-',  # Larger Adjustments Keywords
-                '-'   # Create New Keywords
+                '-',
+                '-',
+                '-',
+                '-'
             ]
     
-# Style the summary statistics
+    # Style the summary statistics
     summary_styler = summary_stats.style.set_properties(**{
         'text-align': 'left',
         'padding': '12px'
-    }).format({
-        'Target': lambda x: f"{x:,.0f}" if isinstance(x, (int, float)) else x,
-        **{f'Competitor {i}': lambda x: f"{x:,.0f}" if isinstance(x, (int, float)) else x 
-           for i in range(1, len(data_frames))}
     }).set_table_styles([
         {'selector': 'thead th', 
          'props': [('background-color', '#2c3e50'), 
@@ -338,31 +200,31 @@ def get_top_keywords_by_category(df, domain_type='target'):
             # Write summary statistics
             summary_stats.to_excel(writer, index=False, sheet_name="Summary")
             
-            # Get top keywords
+            # Get and write top keywords
             target_top_kw = get_top_keywords_by_category(filtered_df, 'target')
             competitor_top_kw = {}
             for i in range(1, len(data_frames)):
                 comp_col = f'Competitor {i}'
                 if f'{comp_col} Rank' in filtered_df.columns:
                     competitor_top_kw[comp_col] = get_top_keywords_by_category(filtered_df, comp_col)
-            
-            # Prepare top keywords data for single write
+
+# Prepare top keywords data for single write
             top_kw_rows = []
             
-            # Add target domain keywords (sorted by search volume)
+            # Add target domain keywords
             for category, df in target_top_kw.items():
                 # Add category header
                 top_kw_rows.append(pd.DataFrame({'Category': [category]}))
-                # Add data (already sorted by search volume)
+                # Add data
                 top_kw_rows.append(df)
                 # Add blank row
                 top_kw_rows.append(pd.DataFrame({'Category': ['']}))
             
-            # Add competitor keywords (sorted by rank, then search volume)
+            # Add competitor keywords
             for comp_name, comp_df in competitor_top_kw.items():
                 # Add competitor header
                 top_kw_rows.append(pd.DataFrame({'Category': [f"{comp_name} Top Keywords"]}))
-                # Add data (already sorted by rank and search volume)
+                # Add data
                 top_kw_rows.append(comp_df)
                 # Add blank row
                 top_kw_rows.append(pd.DataFrame({'Category': ['']}))
@@ -411,13 +273,13 @@ def get_top_keywords_by_category(df, domain_type='target'):
             for ws in [rankings_ws, summary_ws, top_kw_ws]:
                 apply_basic_styling(ws)
             
-# Rankings sheet specific styling
+            # Rankings sheet specific styling
             rank_columns = [col for col in filtered_df.columns if 'Rank' in col]
             for col in rank_columns:
                 col_idx = filtered_df.columns.get_loc(col) + 1
                 col_letter = openpyxl.utils.get_column_letter(col_idx)
                 
-                # First add light gray for rank 100 (this should be applied first)
+                # First add light gray for rank 100
                 rankings_ws.conditional_formatting.add(
                     f'{col_letter}2:{col_letter}{len(filtered_df) + 1}',
                     CellIsRule(
@@ -428,27 +290,21 @@ def get_top_keywords_by_category(df, domain_type='target'):
                     )
                 )
                 
-                # Then add color scale for ranks 1-99 using fixed values
+                # Then add color scale only for ranks 1-99
                 rankings_ws.conditional_formatting.add(
                     f'{col_letter}2:{col_letter}{len(filtered_df) + 1}',
                     ColorScaleRule(
-                        start_type='num',
-                        start_value=1,
+                        start_type='percentile',
+                        start_value=0,
                         start_color='63BE7B',  # Green
-                        mid_type='num',
-                        mid_value=25,  # Midpoint at rank 25
+                        mid_type='percentile',
+                        mid_value=50,
                         mid_color='FFEB84',  # Yellow
-                        end_type='num',
-                        end_value=50,  # End at rank 50
+                        end_type='percentile',
+                        end_value=100,
                         end_color='F8696B'  # Red
                     )
                 )
-
-                # Add number formatting and ensure rank 100 is gray
-                for cell in rankings_ws[col_letter][1:]:
-                    cell.number_format = '0'
-                    if cell.value == 100:
-                        cell.fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
             
             # Format numbers in all sheets
             for ws in [rankings_ws, summary_ws, top_kw_ws]:
