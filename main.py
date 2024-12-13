@@ -15,6 +15,19 @@ target_domain = st.sidebar.text_input("Enter the target domain (e.g., 'pella.com
 st.sidebar.header("Data Upload")
 uploaded_files = st.sidebar.file_uploader("Upload CSV Files", type=["csv"], accept_multiple_files=True)
 
+def clean_rank_data(df, rank_columns):
+    """Clean and prepare rank data for styling"""
+    df = df.copy()
+    for col in rank_columns:
+        if col in df.columns:
+            # Convert to numeric, replace non-numeric values with NaN
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+            # Replace NaN with a high number (e.g., 9999)
+            df[col] = df[col].fillna(9999)
+            # Ensure values are within reasonable range
+            df[col] = df[col].clip(1, 9999)
+    return df
+
 # Function to generate recommendations
 def generate_recommendation(row, target_rank_column, competitor_rank_columns):
     target_rank = row[target_rank_column]
@@ -65,34 +78,51 @@ if uploaded_files and target_domain:
     if recommendation_filter != "All":
         filtered_df = filtered_df[filtered_df["Recommendation"] == recommendation_filter]
 
-    # Highlight rank columns
+    # Check if filtered DataFrame is empty
+    if filtered_df.empty:
+        st.warning("No data to display after applying filters.")
+        st.stop()
+
+    # Rank columns to style
     rank_columns_to_style = [target_rank_column] + competitor_rank_columns
     
-    # Ensure the rank columns are numeric and handle NaN values
-    for col in rank_columns_to_style:
-        if col in filtered_df.columns:
-            filtered_df[col] = pd.to_numeric(filtered_df[col], errors="coerce").fillna(9999)
-    
-    # Filter numeric columns dynamically for gradient styling
-    numeric_columns = [
-        col for col in rank_columns_to_style
-        if col in filtered_df.columns and pd.api.types.is_numeric_dtype(filtered_df[col])
-    ]
-    
-    # Apply background gradient to numeric columns only
-    if numeric_columns:
-        styled_df = filtered_df.style.background_gradient(
-            subset=numeric_columns,
-            cmap="RdYlGn_r"
-        )
-    else:
-        st.warning("No numeric columns available for gradient styling.")
-        styled_df = filtered_df  # Fallback to unstyled DataFrame
-    
-    # Display the styled DataFrame
-    st.subheader("Keyword Rankings Table")
-    st.dataframe(styled_df, use_container_width=True)
+    # Clean the rank data
+    filtered_df = clean_rank_data(filtered_df, rank_columns_to_style)
 
+    # Display the DataFrame with styling
+    st.subheader("Keyword Rankings Table")
+
+    try:
+        # Create a copy for styling
+        display_df = filtered_df.copy()
+        
+        # Identify numeric columns for styling
+        numeric_columns = [col for col in rank_columns_to_style 
+                         if col in display_df.columns 
+                         and pd.api.types.is_numeric_dtype(display_df[col])]
+        
+        if numeric_columns:
+            # Create styler object
+            styler = display_df.style
+            
+            # Apply background gradient to numeric columns
+            styler = styler.background_gradient(
+                subset=numeric_columns,
+                cmap='RdYlGn_r',
+                vmin=1,
+                vmax=100
+            )
+            
+            # Display the styled DataFrame
+            st.dataframe(styler, use_container_width=True)
+        else:
+            # If no numeric columns, display without styling
+            st.dataframe(display_df, use_container_width=True)
+            
+    except Exception as e:
+        st.error(f"Error applying styling: {str(e)}")
+        # Fallback to displaying unstyled DataFrame
+        st.dataframe(display_df, use_container_width=True)
 
     # Summary insights using OpenAI
     st.subheader("Summary Insights")
@@ -106,7 +136,7 @@ if uploaded_files and target_domain:
             """
             try:
                 response = openai.ChatCompletion.create(
-                    model="gpt-4o-mini",
+                    model="gpt-4",  # Changed from gpt-4o-mini to gpt-4
                     messages=[
                         {"role": "system", "content": "You are a helpful SEO strategist."},
                         {"role": "user", "content": summary_prompt}
