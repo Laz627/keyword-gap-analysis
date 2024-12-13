@@ -29,7 +29,6 @@ def process_competitor_data(data_frames, target_domain):
     for df in data_frames:
         df.columns = [col.strip() for col in df.columns]
         all_keywords.update(df['Keyword'].unique())
-        # Update search volumes, preferring non-zero values
         for keyword, volume in zip(df['Keyword'], df['Search Volume']):
             if keyword not in search_volumes or (volume > 0 and search_volumes[keyword] == 0):
                 search_volumes[keyword] = volume
@@ -37,24 +36,21 @@ def process_competitor_data(data_frames, target_domain):
     final_df = pd.DataFrame(list(all_keywords), columns=['Keyword'])
     final_df['Search Volume'] = final_df['Keyword'].map(search_volumes)
     
-    # Get domain names from URLs
-    domain_names = []
-    for df in data_frames:
-        # Get the most common domain from URLs in this dataset
-        domains = df['URL'].dropna().apply(lambda x: urlparse(x).netloc.replace('www.', '')).value_counts()
-        domain_names.append(domains.index[0] if not domains.empty else 'unknown')
+    # Initialize rank and URL columns
+    final_df['Target Rank'] = 100  # Default value
+    final_df['Target URL'] = None
     
-    # Process each dataset separately
-    target_found = False
+    # Process each dataset
     competitor_count = 0
     
-    # First find and process target domain
     for i, df in enumerate(data_frames):
         temp_df = df[['Keyword', 'URL', 'Rank']].copy()
+        
+        # Check if this dataset contains the target domain
         contains_target = temp_df['URL'].apply(lambda x: target_domain.lower() in str(x).lower() if pd.notnull(x) else False)
         
         if contains_target.any():
-            target_found = True
+            # This is the target dataset
             target_data = temp_df[contains_target].copy()
             final_df = final_df.merge(
                 target_data[['Keyword', 'Rank', 'URL']], 
@@ -62,15 +58,11 @@ def process_competitor_data(data_frames, target_domain):
                 how='left',
                 suffixes=('', '_target')
             )
-            final_df[f'{domain_names[i]} Rank'] = final_df['Rank'].fillna(100)
-            final_df[f'{domain_names[i]} URL'] = final_df['URL']
+            final_df['Target Rank'] = final_df['Rank'].fillna(100)
+            final_df['Target URL'] = final_df['URL']
             final_df.drop(['Rank', 'URL'], axis=1, inplace=True)
-            break
-    
-    # Then process competitor domains
-    for i, df in enumerate(data_frames):
-        if target_domain.lower() not in str(df['URL'].iloc[0]).lower():
-            temp_df = df[['Keyword', 'URL', 'Rank']].copy()
+        else:
+            # This is a competitor dataset
             competitor_count += 1
             final_df = final_df.merge(
                 temp_df[['Keyword', 'Rank', 'URL']], 
@@ -78,22 +70,39 @@ def process_competitor_data(data_frames, target_domain):
                 how='left',
                 suffixes=('', f'_comp{competitor_count}')
             )
-            final_df[f'{domain_names[i]} Rank'] = final_df['Rank'].fillna(100)
-            final_df[f'{domain_names[i]} URL'] = final_df['URL']
+            final_df[f'Competitor {competitor_count} Rank'] = final_df['Rank'].fillna(100)
+            final_df[f'Competitor {competitor_count} URL'] = final_df['URL']
             final_df.drop(['Rank', 'URL'], axis=1, inplace=True)
     
-    # Generate recommendations
-    final_df['Recommendation'] = final_df.apply(lambda row: generate_recommendations(row, target_domain), axis=1)
+    # Generate recommendations using the original column names
+    def generate_recommendations(row):
+        target_rank = row['Target Rank']
+        competitor_ranks = [row[col] for col in row.index if 'Competitor' in col and 'Rank' in col]
+        competitor_ranks = [r for r in competitor_ranks if r != 100]  # Exclude non-ranking positions
+        
+        if target_rank == 100:
+            return "Create New"
+        elif competitor_ranks:  # If there are competing rankings
+            best_competitor_rank = min(competitor_ranks)
+            if target_rank > best_competitor_rank:  # If any competitor ranks better
+                if target_rank <= 20:
+                    return "Optimize"
+                elif target_rank <= 50:
+                    return "Larger Adjustments"
+                else:
+                    return "Create New"
+            else:
+                return "Defend"
+        else:  # If no competitors are ranking
+            return "Defend"
     
-    # Reorder columns to match desired format
-    target_rank_col = next(col for col in final_df.columns if 'Rank' in col and target_domain.lower() in col.lower())
-    competitor_rank_cols = [col for col in final_df.columns if 'Rank' in col and target_domain.lower() not in col.lower()]
-    target_url_col = next(col for col in final_df.columns if 'URL' in col and target_domain.lower() in col.lower())
-    competitor_url_cols = [col for col in final_df.columns if 'URL' in col and target_domain.lower() not in col.lower()]
+    final_df['Recommendation'] = final_df.apply(generate_recommendations, axis=1)
     
-    final_df = final_df[['Keyword', 'Recommendation', 'Search Volume', 
-                        target_rank_col] + competitor_rank_cols +
-                        [target_url_col] + competitor_url_cols]
+    # Reorder columns
+    rank_cols = ['Target Rank'] + [col for col in final_df.columns if 'Competitor' in col and 'Rank' in col]
+    url_cols = ['Target URL'] + [col for col in final_df.columns if 'Competitor' in col and 'URL' in col]
+    
+    final_df = final_df[['Keyword', 'Recommendation', 'Search Volume'] + rank_cols + url_cols]
     
     return final_df
 
