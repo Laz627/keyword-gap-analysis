@@ -68,25 +68,31 @@ if uploaded_files and target_domain:
     # Highlight rank columns
     rank_columns_to_style = [target_rank_column] + competitor_rank_columns
     
-    # Ensure the rank columns are numeric
+    # Ensure the rank columns are numeric and handle NaN values
     for col in rank_columns_to_style:
         if col in filtered_df.columns:
-            filtered_df[col] = pd.to_numeric(filtered_df[col], errors='coerce')
+            filtered_df[col] = pd.to_numeric(filtered_df[col], errors="coerce").fillna(9999)
     
-    # Filter numeric columns dynamically
+    # Filter numeric columns dynamically for gradient styling
     numeric_columns = [
-        col for col in rank_columns_to_style if col in filtered_df.columns and pd.api.types.is_numeric_dtype(filtered_df[col])
+        col for col in rank_columns_to_style
+        if col in filtered_df.columns and pd.api.types.is_numeric_dtype(filtered_df[col])
     ]
     
     # Apply background gradient to numeric columns only
-    styled_df = filtered_df.style.background_gradient(
-        subset=numeric_columns,
-        cmap="RdYlGn_r"
-    )
+    if numeric_columns:
+        styled_df = filtered_df.style.background_gradient(
+            subset=numeric_columns,
+            cmap="RdYlGn_r"
+        )
+    else:
+        st.warning("No numeric columns available for gradient styling.")
+        styled_df = filtered_df  # Fallback to unstyled DataFrame
     
-    # Display the styled dataframe
+    # Display the styled DataFrame
     st.subheader("Keyword Rankings Table")
     st.dataframe(styled_df, use_container_width=True)
+
 
     # Summary insights using OpenAI
     st.subheader("Summary Insights")
