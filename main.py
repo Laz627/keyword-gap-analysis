@@ -97,14 +97,21 @@ def process_competitor_data(data_frames, target_domain):
     # Create final DataFrame with desired column order
     final_df = pd.DataFrame()
     final_df['Keyword'] = combined_df['Keyword']
-    final_df['Search Volume'] = combined_df['Search Volume']
-    
-    # Convert target ranks to pandas Series before processing
-    target_ranks_series = pd.Series(target_ranks)
     final_df['Target Rank'] = pd.to_numeric(target_ranks_series, errors='coerce').fillna(100).astype(int)
     
-    # Add recommendations right after Target Rank
+    # Add competitor rank columns first (needed for generate_recommendations)
+    for i in range(len(data_frames) - 1):
+        comp_ranks = [ranks[i] if ranks else 100 for ranks in competitor_ranks]
+        comp_ranks_series = pd.Series(comp_ranks)
+        final_df[f'Competitor {i+1} Rank'] = pd.to_numeric(comp_ranks_series, errors='coerce').fillna(100).astype(int)
+    
+    # Generate recommendations after all rank data is available
     final_df['Recommendation'] = final_df.apply(generate_recommendations, axis=1)
+    
+    # Reorder columns to put recommendation second
+    rank_cols = [col for col in final_df.columns if 'Rank' in col]
+    url_cols = [col for col in final_df.columns if 'URL' in col]
+    final_df = final_df[['Keyword', 'Recommendation', 'Search Volume'] + rank_cols + url_cols]
     
     # Add competitor rank columns
     for i in range(len(data_frames) - 1):
@@ -134,12 +141,17 @@ def generate_recommendations(row):
     
     if target_rank == 100:
         return "Create New"
-    elif not competitor_ranks or target_rank < min(competitor_ranks):
+    elif competitor_ranks:  # If there are competing rankings
+        best_competitor_rank = min(competitor_ranks)
+        if target_rank > best_competitor_rank:  # If any competitor ranks better
+            if target_rank <= 20:
+                return "Optimize"
+            else:
+                return "Create New"
+        else:
+            return "Defend"
+    else:  # If no competitors are ranking
         return "Defend"
-    elif target_rank <= 20:
-        return "Optimize"
-    else:
-        return "Create New"
 
 if uploaded_files and target_domain:
     # Process the uploaded files
@@ -173,7 +185,7 @@ if uploaded_files and target_domain:
     # Display the DataFrame with styling
     st.subheader("Keyword Rankings Table")
 
-    try:
+try:
         # Create a copy for styling
         display_df = filtered_df.copy()
         
@@ -188,18 +200,6 @@ if uploaded_files and target_domain:
             'padding': '8px',
             'text-align': 'left'
         })
-        
-        # Style the recommendation column with solid colors
-        def recommendation_style(val):
-            colors = {
-                'Defend': 'background-color: #90EE90',    # Light green
-                'Optimize': 'background-color: #FFD700',   # Gold
-                'Create New': 'background-color: #FFA07A'  # Light salmon
-            }
-            return colors.get(val, '')
-        
-        # Apply recommendation styling without color scale
-        styler.applymap(recommendation_style, subset=['Recommendation'])
         
         # Apply background gradient only to rank columns (excluding 100s)
         rank_columns = [col for col in filtered_df.columns if 'Rank' in col]
