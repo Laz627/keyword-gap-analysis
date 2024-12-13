@@ -34,17 +34,6 @@ def process_competitor_data(data_frames, target_domain):
     combined_df = pd.DataFrame(list(all_keywords), columns=['Keyword'])
     combined_df['Search Volume'] = combined_df['Keyword'].map(search_volumes)
     
-    # Process each dataframe
-    for df in data_frames:
-        df = df.copy()
-        # Create a mapping of keywords to ranks and URLs
-        rank_map = dict(zip(df['Keyword'], df['Rank']))
-        url_map = dict(zip(df['Keyword'], df['URL']))
-        
-        # Add columns to combined_df
-        combined_df[f'temp_rank'] = combined_df['Keyword'].map(rank_map)
-        combined_df[f'temp_url'] = combined_df['Keyword'].map(url_map)
-    
     # Now process URLs to identify target domain and competitors
     target_ranks = []
     target_urls = []
@@ -52,10 +41,10 @@ def process_competitor_data(data_frames, target_domain):
     competitor_urls = []
     
     # Process each row
-    for idx, row in combined_df.iterrows():
+    for keyword in combined_df['Keyword']:
         keyword_data = []
         for df in data_frames:
-            mask = df['Keyword'] == row['Keyword']
+            mask = df['Keyword'] == keyword
             if mask.any():
                 url = df.loc[mask, 'URL'].iloc[0]
                 rank = df.loc[mask, 'Rank'].iloc[0]
@@ -97,32 +86,28 @@ def process_competitor_data(data_frames, target_domain):
     # Create final DataFrame with desired column order
     final_df = pd.DataFrame()
     final_df['Keyword'] = combined_df['Keyword']
-    final_df['Target Rank'] = pd.to_numeric(target_ranks_series, errors='coerce').fillna(100).astype(int)
+    final_df['Search Volume'] = combined_df['Search Volume']
     
-    # Add competitor rank columns first (needed for generate_recommendations)
+    # Add target rank
+    final_df['Target Rank'] = pd.to_numeric(target_ranks, errors='coerce').fillna(100).astype(int)
+    
+    # Add competitor rank columns
     for i in range(len(data_frames) - 1):
         comp_ranks = [ranks[i] if ranks else 100 for ranks in competitor_ranks]
-        comp_ranks_series = pd.Series(comp_ranks)
-        final_df[f'Competitor {i+1} Rank'] = pd.to_numeric(comp_ranks_series, errors='coerce').fillna(100).astype(int)
+        final_df[f'Competitor {i+1} Rank'] = pd.to_numeric(comp_ranks, errors='coerce').fillna(100).astype(int)
     
     # Generate recommendations after all rank data is available
     final_df['Recommendation'] = final_df.apply(generate_recommendations, axis=1)
+    
+    # Add URL columns
+    final_df['Target URL'] = target_urls
+    for i in range(len(data_frames) - 1):
+        final_df[f'Competitor {i+1} URL'] = [urls[i] if urls else None for urls in competitor_urls]
     
     # Reorder columns to put recommendation second
     rank_cols = [col for col in final_df.columns if 'Rank' in col]
     url_cols = [col for col in final_df.columns if 'URL' in col]
     final_df = final_df[['Keyword', 'Recommendation', 'Search Volume'] + rank_cols + url_cols]
-    
-    # Add competitor rank columns
-    for i in range(len(data_frames) - 1):
-        comp_ranks = [ranks[i] if ranks else 100 for ranks in competitor_ranks]
-        comp_ranks_series = pd.Series(comp_ranks)
-        final_df[f'Competitor {i+1} Rank'] = pd.to_numeric(comp_ranks_series, errors='coerce').fillna(100).astype(int)
-    
-    # Add URL columns at the end
-    final_df['Target URL'] = target_urls
-    for i in range(len(data_frames) - 1):
-        final_df[f'Competitor {i+1} URL'] = [urls[i] if urls else None for urls in competitor_urls]
     
     return final_df
 
