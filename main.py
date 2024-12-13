@@ -134,7 +134,7 @@ def generate_recommendations(row):
     else:
         return "Create New"
 
-    if uploaded_files and target_domain:
+if uploaded_files and target_domain:
     # Process the uploaded files
     data_frames = [pd.read_csv(file) for file in uploaded_files]
     
