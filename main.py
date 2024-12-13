@@ -286,9 +286,10 @@ if uploaded_files and target_domain:
                 len(filtered_df[filtered_df[comp_col] <= 10]),
                 len(filtered_df[filtered_df[comp_col] <= 3]),
                 len(filtered_df[filtered_df[comp_col] == 100]),
-                '-',
-                '-',
-                '-'
+                '-',  # Defend Keywords
+                '-',  # Optimize Keywords
+                '-',  # Larger Adjustments Keywords
+                '-'   # Create New Keywords
             ]
     
 # Style the summary statistics
