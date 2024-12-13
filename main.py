@@ -159,7 +159,7 @@ def generate_recommendations(row):
     if keyword_filter:
         filtered_df = filtered_df[filtered_df["Keyword"].str.contains(keyword_filter, case=False, na=False)]
     if recommendation_filter != "All":
-        filtered_df = filtered_df["Recommendation"] == recommendation_filter]
+        filtered_df = filtered_df[filtered_df["Recommendation"] == recommendation_filter]
 
     # Check if filtered DataFrame is empty
     if filtered_df.empty:
