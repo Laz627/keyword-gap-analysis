@@ -236,9 +236,10 @@ try:
         
         # Display the styled DataFrame
         st.dataframe(styler, use_container_width=True, height=600)
-    except Exception as e:
-        st.error(f"Error applying styling: {str(e)}")
-        st.dataframe(display_df, use_container_width=True)
+    
+except Exception as e:
+    st.error(f"Error applying styling: {str(e)}")
+    st.dataframe(display_df, use_container_width=True)
 
     # Summary statistics
     st.subheader("Summary Statistics")
