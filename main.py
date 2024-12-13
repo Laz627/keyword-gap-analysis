@@ -4,7 +4,8 @@ import numpy as np
 from io import BytesIO
 import openpyxl
 from openpyxl.styles import PatternFill, Font, Color, Border, Side, Alignment
-from openpyxl.formatting.rule import ColorScaleRule, Rule
+from openpyxl.formatting.rule import ColorScaleRule
+from openpyxl.formatting.rule import CellIsRule
 
 # Streamlit app configuration
 st.set_page_config(page_title="Keyword Ranking Analysis", layout="wide")
@@ -433,10 +434,10 @@ if uploaded_files and target_domain:
                 # Add light gray for rank 100
                 rankings_ws.conditional_formatting.add(
                     f'{col_letter}2:{col_letter}{len(filtered_df) + 1}',
-                    Rule(
-                        type="cellIs",
-                        operator="equal",
+                    CellIsRule(
+                        operator='equal',
                         formula=['100'],
+                        stopIfTrue=True,
                         fill=PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
                     )
                 )
