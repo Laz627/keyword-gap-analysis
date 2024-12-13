@@ -88,13 +88,13 @@ def process_competitor_data(data_frames, target_domain):
     final_df['Keyword'] = combined_df['Keyword']
     final_df['Search Volume'] = combined_df['Search Volume']
     
-    # Add target rank
-    final_df['Target Rank'] = pd.to_numeric(target_ranks, errors='coerce').fillna(100).astype(int)
+    # Add target rank (convert numpy array to pandas Series first)
+    final_df['Target Rank'] = pd.Series(target_ranks).replace({None: 100}).astype(int)
     
     # Add competitor rank columns
     for i in range(len(data_frames) - 1):
         comp_ranks = [ranks[i] if ranks else 100 for ranks in competitor_ranks]
-        final_df[f'Competitor {i+1} Rank'] = pd.to_numeric(comp_ranks, errors='coerce').fillna(100).astype(int)
+        final_df[f'Competitor {i+1} Rank'] = pd.Series(comp_ranks).replace({None: 100}).astype(int)
     
     # Generate recommendations after all rank data is available
     final_df['Recommendation'] = final_df.apply(generate_recommendations, axis=1)
