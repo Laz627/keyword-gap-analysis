@@ -73,13 +73,18 @@ if uploaded_files and target_domain:
         if col in filtered_df.columns:
             filtered_df[col] = pd.to_numeric(filtered_df[col], errors='coerce')
     
-    # Apply background gradient only to numeric columns
+    # Filter numeric columns dynamically
+    numeric_columns = [
+        col for col in rank_columns_to_style if col in filtered_df.columns and pd.api.types.is_numeric_dtype(filtered_df[col])
+    ]
+    
+    # Apply background gradient to numeric columns only
     styled_df = filtered_df.style.background_gradient(
-        subset=[col for col in rank_columns_to_style if col in filtered_df.columns],
+        subset=numeric_columns,
         cmap="RdYlGn_r"
     )
     
-    # Display the dataframe
+    # Display the styled dataframe
     st.subheader("Keyword Rankings Table")
     st.dataframe(styled_df, use_container_width=True)
 
