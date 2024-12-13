@@ -6,6 +6,7 @@ import openpyxl
 from openpyxl.styles import PatternFill, Font, Color, Border, Side, Alignment
 from openpyxl.formatting.rule import ColorScaleRule
 from openpyxl.formatting.rule import CellIsRule
+from urllib.parse import urlparse
 
 # Streamlit app configuration
 st.set_page_config(page_title="Keyword Ranking Analysis", layout="wide")
@@ -22,72 +23,77 @@ def process_competitor_data(data_frames, target_domain):
     """Process and combine competitor data with specific column ordering"""
     # Initialize empty DataFrame for final results
     all_keywords = set()
+    search_volumes = {}
+    
+    # First pass to collect all keywords and search volumes
     for df in data_frames:
         df.columns = [col.strip() for col in df.columns]
         all_keywords.update(df['Keyword'].unique())
+        # Update search volumes, preferring non-zero values
+        for keyword, volume in zip(df['Keyword'], df['Search Volume']):
+            if keyword not in search_volumes or (volume > 0 and search_volumes[keyword] == 0):
+                search_volumes[keyword] = volume
     
     final_df = pd.DataFrame(list(all_keywords), columns=['Keyword'])
+    final_df['Search Volume'] = final_df['Keyword'].map(search_volumes)
+    
+    # Get domain names from URLs
+    domain_names = []
+    for df in data_frames:
+        # Get the most common domain from URLs in this dataset
+        domains = df['URL'].dropna().apply(lambda x: urlparse(x).netloc.replace('www.', '')).value_counts()
+        domain_names.append(domains.index[0] if not domains.empty else 'unknown')
     
     # Process each dataset separately
+    target_found = False
+    competitor_count = 0
+    
+    # First find and process target domain
     for i, df in enumerate(data_frames):
-        # Create temporary DataFrame with just keyword and rank info
-        temp_df = df[['Keyword', 'URL', 'Rank', 'Search Volume']].copy()
-        
-        # Check if this dataset contains the target domain
+        temp_df = df[['Keyword', 'URL', 'Rank']].copy()
         contains_target = temp_df['URL'].apply(lambda x: target_domain.lower() in str(x).lower() if pd.notnull(x) else False)
         
         if contains_target.any():
-            # This is the target dataset
+            target_found = True
             target_data = temp_df[contains_target].copy()
             final_df = final_df.merge(
-                target_data[['Keyword', 'Rank', 'URL', 'Search Volume']], 
+                target_data[['Keyword', 'Rank', 'URL']], 
                 on='Keyword', 
                 how='left',
                 suffixes=('', '_target')
             )
-            final_df['Target Rank'] = final_df['Rank'].fillna(100)
-            final_df['Target URL'] = final_df['URL']
+            final_df[f'{domain_names[i]} Rank'] = final_df['Rank'].fillna(100)
+            final_df[f'{domain_names[i]} URL'] = final_df['URL']
             final_df.drop(['Rank', 'URL'], axis=1, inplace=True)
-            
-            # Use the search volume from target when available
-            if 'Search Volume' in final_df.columns:
-                final_df['Search Volume'] = final_df['Search Volume_target'].combine_first(final_df['Search Volume'])
-                final_df.drop('Search Volume_target', axis=1, inplace=True)
-            else:
-                final_df['Search Volume'] = final_df['Search Volume_target']
-                final_df.drop('Search Volume_target', axis=1, inplace=True)
-        else:
-            # This is a competitor dataset
-            comp_number = sum(1 for col in final_df.columns if 'Competitor' in col and 'Rank' in col) + 1
+            break
+    
+    # Then process competitor domains
+    for i, df in enumerate(data_frames):
+        if target_domain.lower() not in str(df['URL'].iloc[0]).lower():
+            temp_df = df[['Keyword', 'URL', 'Rank']].copy()
+            competitor_count += 1
             final_df = final_df.merge(
                 temp_df[['Keyword', 'Rank', 'URL']], 
                 on='Keyword', 
                 how='left',
-                suffixes=('', f'_comp{comp_number}')
+                suffixes=('', f'_comp{competitor_count}')
             )
-            final_df[f'Competitor {comp_number} Rank'] = final_df['Rank'].fillna(100)
-            final_df[f'Competitor {comp_number} URL'] = final_df['URL']
+            final_df[f'{domain_names[i]} Rank'] = final_df['Rank'].fillna(100)
+            final_df[f'{domain_names[i]} URL'] = final_df['URL']
             final_df.drop(['Rank', 'URL'], axis=1, inplace=True)
-            
-            # If this is the first dataset and we don't have search volume yet
-            if 'Search Volume' not in final_df.columns:
-                final_df['Search Volume'] = temp_df['Search Volume']
-    
-    # Ensure all competitor columns exist
-    expected_competitor_count = len(data_frames) - 1
-    current_competitor_count = sum(1 for col in final_df.columns if 'Competitor' in col and 'Rank' in col)
-    
-    for i in range(current_competitor_count + 1, expected_competitor_count + 1):
-        final_df[f'Competitor {i} Rank'] = 100
-        final_df[f'Competitor {i} URL'] = None
     
     # Generate recommendations
     final_df['Recommendation'] = final_df.apply(generate_recommendations, axis=1)
     
-    # Reorder columns
-    rank_cols = [col for col in final_df.columns if 'Rank' in col]
-    url_cols = [col for col in final_df.columns if 'URL' in col]
-    final_df = final_df[['Keyword', 'Recommendation', 'Search Volume'] + rank_cols + url_cols]
+    # Reorder columns to match desired format
+    target_rank_col = next(col for col in final_df.columns if 'Rank' in col and target_domain.lower() in col.lower())
+    competitor_rank_cols = [col for col in final_df.columns if 'Rank' in col and target_domain.lower() not in col.lower()]
+    target_url_col = next(col for col in final_df.columns if 'URL' in col and target_domain.lower() in col.lower())
+    competitor_url_cols = [col for col in final_df.columns if 'URL' in col and target_domain.lower() not in col.lower()]
+    
+    final_df = final_df[['Keyword', 'Recommendation', 'Search Volume', 
+                        target_rank_col] + competitor_rank_cols +
+                        [target_url_col] + competitor_url_cols]
     
     return final_df
 
