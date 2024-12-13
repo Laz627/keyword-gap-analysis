@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 from io import BytesIO
 import openai
+import matplotlib
 
 st.set_page_config(page_title="Keyword Ranking Analysis", layout="wide")
 st.title("Keyword Ranking Analysis")
@@ -41,17 +42,12 @@ if uploaded_files and designated_domain:
 
     # Check for required columns
     required_columns = ["Keyword", "Rank", "BrightEdge Volume", "URL"]
-    for col in required_columns:
-        if col not in df.columns:
-            st.error(f"Column '{col}' not found in the uploaded files. Please ensure all files have this column.")
-            st.stop()
+    missing_cols = [col for col in required_columns if col not in df.columns]
+    if missing_cols:
+        st.error(f"The following required columns are missing from the uploaded files: {missing_cols}")
+        st.stop()
 
-    # Rename known columns to a standard format
-    # We'll map:
-    # Keyword -> Keyword
-    # Rank -> Designated_Rank
-    # BrightEdge Volume -> BrightEdge_Volume
-    # URL -> Designated_URL
+    # Rename known columns to standardized names for the designated domain
     rename_map = {
         "Keyword": "Keyword",
         "Rank": "Designated_Rank",
@@ -60,32 +56,35 @@ if uploaded_files and designated_domain:
     }
     df = df.rename(columns=rename_map)
 
-    # All columns beyond these four are considered competitor columns
-    # They should come in pairs: Competitor_Rank, Competitor_URL
-    # Check how many extra columns we have
-    extra_cols = [c for c in df.columns if c not in rename_map.values()]
+    # Identify any columns beyond the first four as competitor columns
+    standard_cols = list(rename_map.values())
+    extra_cols = [c for c in df.columns if c not in standard_cols]
 
-    # Competitor rank columns will be those with numeric data (if available),
-    # and their corresponding URL columns come next. 
-    # If your CSVs are structured consistently (rank then URL), you might rely 
-    # on even/odd indexing of these extra columns. Otherwise, you'll need a more robust approach.
-
-    # For simplicity, we assume the original structure after the four main columns 
-    # is consistently pairs of (CompetitorX_Rank, CompetitorX_URL).
-    # We can identify columns by their order:
-    competitor_rank_cols = extra_cols[0::2]  # even indexed extra cols
-    competitor_url_cols = extra_cols[1::2]   # odd indexed extra cols
-
-    # Convert rank columns to numeric
+    # Convert ranks to numeric
     df["Designated_Rank"] = pd.to_numeric(df["Designated_Rank"], errors="coerce")
-    for c in competitor_rank_cols:
-        df[c] = pd.to_numeric(df[c], errors="coerce")
+
+    # Any extra columns are treated as competitor data.
+    # We won't enforce pairs. If competitor columns exist, they are shown as is.
+    # If you do have pairs (Rank, URL), they will appear in the final table.
+    # If competitor rank columns exist, try to convert them to numeric
+    # We'll guess competitor rank columns by checking if they are numeric.
+    # If not numeric, we skip conversion.
+    for c in extra_cols:
+        try:
+            df[c] = pd.to_numeric(df[c], errors="ignore")
+        except:
+            pass
 
     # Recommendation logic
+    # Assume competitor rank columns are any numeric columns except the designated rank
+    # This is a heuristic. Adjust if needed.
+    numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+    competitor_rank_cols = [c for c in numeric_cols if c not in ["Designated_Rank"]]
+
     recommendations = []
     for idx, row in df.iterrows():
         des_rank = row["Designated_Rank"]
-        comp_ranks = [row[c] for c in competitor_rank_cols if not pd.isna(row[c])]
+        comp_ranks = [row[c] for c in competitor_rank_cols if pd.notna(row[c])]
 
         if pd.isna(des_rank):
             # Domain does not rank
@@ -104,11 +103,11 @@ if uploaded_files and designated_domain:
                     rec = "Optimize Page"
         recommendations.append(rec)
 
-    df.insert(4, "Recommendation", recommendations)
-
-    # Display the raw DataFrame first to ensure all columns are present
-    st.subheader("Raw Merged DataFrame")
-    st.write(df)
+    # Insert Recommendations column after Designated_URL
+    if "Recommendation" not in df.columns:
+        df.insert(df.columns.get_loc("Designated_URL") + 1, "Recommendation", recommendations)
+    else:
+        df["Recommendation"] = recommendations
 
     # Filters
     st.subheader("Data Filters")
@@ -122,14 +121,14 @@ if uploaded_files and designated_domain:
         filtered_df = filtered_df[filtered_df["Recommendation"] == recommendation_filter]
 
     # Styling rank columns
-    rank_cols = ["Designated_Rank"] + competitor_rank_cols
-    import matplotlib  # ensure matplotlib is installed
+    # Highlight designated and competitor rank columns
+    rank_cols = ["Designated_Rank"] + competitor_rank_cols if competitor_rank_cols else ["Designated_Rank"]
     styled_df = filtered_df.style.background_gradient(
         subset=rank_cols,
         cmap="RdYlGn_r"
     )
 
-    st.subheader("Keyword Rankings Table (Filtered & Styled)")
+    st.subheader("Keyword Rankings Table")
     st.dataframe(styled_df, use_container_width=True)
 
     # GPT Insights
@@ -145,7 +144,7 @@ if uploaded_files and designated_domain:
             - Designated domain rank
             - BrightEdge Volume (search volume)
             - Designated domain URL
-            - Competitor ranks and URLs
+            - Competitor data (ranks, URLs if available)
             - A Recommendation column (Defend, Optimize Page, or Create New Page)
 
             Based on this data, provide a brief summary of key opportunities, gaps, and strengths for {designated_domain}.
@@ -157,7 +156,6 @@ if uploaded_files and designated_domain:
     # Export the styled table to Excel
     st.subheader("Export Data")
     if st.button("Download Styled Excel"):
-        # Convert styled df to Excel
         buffer = BytesIO()
         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
             styled_df.to_excel(writer, index=False, sheet_name='Rankings')
