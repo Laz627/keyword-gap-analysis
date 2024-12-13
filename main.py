@@ -3,7 +3,6 @@ import pandas as pd
 import numpy as np
 from io import BytesIO
 import openai
-import matplotlib
 
 st.set_page_config(page_title="Keyword Ranking Analysis", layout="wide")
 st.title("Keyword Ranking Analysis")
@@ -36,65 +35,80 @@ def call_gpt_api(api_key, prompt):
         return None
 
 if uploaded_files and designated_domain:
-    # Concatenate all uploaded CSVs
+    # Read and merge CSVs
     data_frames = [pd.read_csv(file) for file in uploaded_files]
     df = pd.concat(data_frames, ignore_index=True)
+    
+    # Check for at least the main columns existing in the combined DataFrame
+    main_cols_original = ["Keyword", "Rank", "BrightEdge Volume", "URL"]
+    for col in main_cols_original:
+        if col not in df.columns:
+            st.error(f"Column '{col}' not found in the uploaded files. Please ensure all files have this column.")
+            st.stop()
 
-    # Check for required columns
-    required_columns = ["Keyword", "Rank", "BrightEdge Volume", "URL"]
-    missing_cols = [col for col in required_columns if col not in df.columns]
-    if missing_cols:
-        st.error(f"The following required columns are missing from the uploaded files: {missing_cols}")
-        st.stop()
-
-    # Rename known columns to standardized names for the designated domain
+    # Identify the first occurrence of each main column and use it as the designated domain column
+    # We rename these main columns to standardized names
     rename_map = {
         "Keyword": "Keyword",
         "Rank": "Designated_Rank",
         "BrightEdge Volume": "BrightEdge_Volume",
         "URL": "Designated_URL"
     }
+    
+    # Rename just once; if duplicates exist, they remain as competitor columns
+    # We'll do this by selecting columns in order and renaming just the first occurrence
+    # to ensure we don't overwrite competitor columns with the same name.
+    df = df.copy()  # Ensure a mutable copy
+    # Create a mapping only for the first occurrence of each column
+    # We'll achieve this by reordering columns: main first occurrences first
+    # Then follow with other columns
+    # This ensures that the first occurrences of the main columns appear at the start
+    # and get renamed. Others remain as is.
+
+    # Extract columns in a fixed order:
+    cols_ordered = []
+    for col in main_cols_original:
+        # Find index of the first occurrence of this column
+        first_idx = df.columns.get_loc(col)
+        cols_ordered.append((first_idx, col))
+    # Sort by their original order of appearance
+    cols_ordered = sorted(cols_ordered, key=lambda x: x[0])
+    # Extract just the column names in that order
+    main_cols_in_order = [x[1] for x in cols_ordered]
+
+    # Now, create a list of columns where main columns appear first (in discovered order),
+    # followed by all other columns
+    remaining_cols = [c for c in df.columns if c not in main_cols_in_order]
+    final_cols = main_cols_in_order + remaining_cols
+
+    df = df[final_cols]
+
+    # Rename the first occurrences of the main columns
     df = df.rename(columns=rename_map)
 
-    # Identify any columns beyond the first four as competitor columns
-    standard_cols = list(rename_map.values())
-    extra_cols = [c for c in df.columns if c not in standard_cols]
-
-    # Convert ranks to numeric
+    # Now we have:
+    # Keyword | Designated_Rank | BrightEdge_Volume | Designated_URL | ...competitor columns...
+    
+    # Convert Designated_Rank to numeric
     df["Designated_Rank"] = pd.to_numeric(df["Designated_Rank"], errors="coerce")
 
-    # Any extra columns are treated as competitor data.
-    # We won't enforce pairs. If competitor columns exist, they are shown as is.
-    # If you do have pairs (Rank, URL), they will appear in the final table.
-    # If competitor rank columns exist, try to convert them to numeric
-    # We'll guess competitor rank columns by checking if they are numeric.
-    # If not numeric, we skip conversion.
-    for c in extra_cols:
-        try:
-            df[c] = pd.to_numeric(df[c], errors="ignore")
-        except:
-            pass
+    # Identify competitor rank columns as numeric columns beyond designated rank
+    numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+    competitor_rank_cols = [c for c in numeric_cols if c not in ["Designated_Rank", "BrightEdge_Volume"]]
+    # We exclude BrightEdge_Volume from competitor ranks since it's not a rank column
 
     # Recommendation logic
-    # Assume competitor rank columns are any numeric columns except the designated rank
-    # This is a heuristic. Adjust if needed.
-    numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-    competitor_rank_cols = [c for c in numeric_cols if c not in ["Designated_Rank"]]
-
     recommendations = []
-    for idx, row in df.iterrows():
+    for _, row in df.iterrows():
         des_rank = row["Designated_Rank"]
         comp_ranks = [row[c] for c in competitor_rank_cols if pd.notna(row[c])]
 
         if pd.isna(des_rank):
-            # Domain does not rank
             rec = "Create New Page"
         else:
             if len(comp_ranks) == 0:
-                # No competitor data, domain is de facto best
                 rec = "Defend"
             else:
-                # Check positioning
                 if des_rank < min(comp_ranks):
                     rec = "Defend"
                 elif des_rank > max(comp_ranks):
@@ -103,9 +117,10 @@ if uploaded_files and designated_domain:
                     rec = "Optimize Page"
         recommendations.append(rec)
 
-    # Insert Recommendations column after Designated_URL
+    # Insert Recommendation column after Designated_URL
     if "Recommendation" not in df.columns:
-        df.insert(df.columns.get_loc("Designated_URL") + 1, "Recommendation", recommendations)
+        insert_pos = df.columns.get_loc("Designated_URL") + 1
+        df.insert(insert_pos, "Recommendation", recommendations)
     else:
         df["Recommendation"] = recommendations
 
@@ -120,9 +135,10 @@ if uploaded_files and designated_domain:
     if recommendation_filter != "All":
         filtered_df = filtered_df[filtered_df["Recommendation"] == recommendation_filter]
 
-    # Styling rank columns
-    # Highlight designated and competitor rank columns
-    rank_cols = ["Designated_Rank"] + competitor_rank_cols if competitor_rank_cols else ["Designated_Rank"]
+    # Apply background gradient only to rank columns, not BrightEdge_Volume
+    # rank_cols includes designated rank and competitor ranks.
+    rank_cols = ["Designated_Rank"] + competitor_rank_cols
+
     styled_df = filtered_df.style.background_gradient(
         subset=rank_cols,
         cmap="RdYlGn_r"
