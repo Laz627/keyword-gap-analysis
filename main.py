@@ -243,9 +243,9 @@ def get_top_keywords_by_category(df, domain_type='target'):
         # Display the styled DataFrame
         st.dataframe(styler, use_container_width=True, height=600)
     
-except Exception as e:
-    st.error(f"Error applying styling: {str(e)}")
-    st.dataframe(filtered_df, use_container_width=True)
+    except Exception as e:
+        st.error(f"Error applying styling: {str(e)}")
+        st.dataframe(filtered_df, use_container_width=True)
 
     # Summary statistics
     st.subheader("Summary Statistics")
