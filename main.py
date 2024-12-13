@@ -37,79 +37,66 @@ def process_competitor_data(data_frames, target_domain):
     combined_df = pd.DataFrame(list(all_keywords), columns=['Keyword'])
     combined_df['Search Volume'] = combined_df['Keyword'].map(search_volumes)
     
-    # Now process URLs to identify target domain and competitors
+    # Initialize lists for target and competitor data
     target_ranks = []
     target_urls = []
-    competitor_ranks = []
-    competitor_urls = []
+    competitor_data = [[] for _ in range(len(data_frames) - 1)]  # List of lists for each competitor
+    competitor_urls = [[] for _ in range(len(data_frames) - 1)]
     
-    # Process each row
+    # Process each keyword
     for keyword in combined_df['Keyword']:
-        keyword_data = []
-        for df in data_frames:
-            keyword_rows = df[df['Keyword'] == keyword]
-            if not keyword_rows.empty:
-                url = keyword_rows['URL'].iloc[0]
-                rank = keyword_rows['Rank'].iloc[0]
-                keyword_data.append((url, rank))
-            else:
-                keyword_data.append((None, None))
-        
-        # Find target domain data
         target_found = False
-        target_rank = 100  # Default to 100 if not found
+        target_rank = 100
         target_url = None
-        target_index = None
+        current_comp_ranks = [100] * (len(data_frames) - 1)  # Initialize with default values
+        current_comp_urls = [None] * (len(data_frames) - 1)
+        comp_index = 0
         
-        for i, (url, rank) in enumerate(keyword_data):
-            if url and target_domain.lower() in str(url).lower():
-                target_found = True
-                target_rank = rank
-                target_url = url
-                target_index = i
-                break
+        # Check each dataframe for the keyword
+        for df in data_frames:
+            keyword_data = df[df['Keyword'] == keyword]
+            if not keyword_data.empty:
+                url = keyword_data['URL'].iloc[0]
+                rank = keyword_data['Rank'].iloc[0]
+                
+                # Check if this is the target domain
+                if url and target_domain.lower() in str(url).lower():
+                    target_rank = rank
+                    target_url = url
+                    target_found = True
+                elif url:  # This is a competitor
+                    if comp_index < len(current_comp_ranks):
+                        current_comp_ranks[comp_index] = rank
+                        current_comp_urls[comp_index] = url
+                    comp_index += 1
         
         target_ranks.append(target_rank)
         target_urls.append(target_url)
         
-        # Collect competitor data (excluding target domain)
-        comp_ranks = []
-        comp_urls = []
-        for i, (url, rank) in enumerate(keyword_data):
-            if i != target_index and url is not None:  # Only include non-target data
-                comp_ranks.append(rank)
-                comp_urls.append(url)
-        
-        # Pad competitor data if needed
-        while len(comp_ranks) < len(data_frames) - 1:
-            comp_ranks.append(100)
-            comp_urls.append(None)
-            
-        competitor_ranks.append(comp_ranks)
-        competitor_urls.append(comp_urls)
+        # Add competitor data
+        for i in range(len(competitor_data)):
+            competitor_data[i].append(current_comp_ranks[i])
+            competitor_urls[i].append(current_comp_urls[i])
     
-    # Create final DataFrame with desired column order
+    # Create final DataFrame
     final_df = pd.DataFrame()
     final_df['Keyword'] = combined_df['Keyword']
     final_df['Search Volume'] = combined_df['Search Volume']
+    final_df['Target Rank'] = target_ranks
     
-    # Add target rank
-    final_df['Target Rank'] = pd.Series(target_ranks).replace({None: 100}).astype(int)
+    # Add competitor columns
+    for i in range(len(competitor_data)):
+        final_df[f'Competitor {i+1} Rank'] = competitor_data[i]
     
-    # Add competitor rank columns
-    for i in range(len(data_frames) - 1):
-        comp_ranks = [ranks[i] if ranks else 100 for ranks in competitor_ranks]
-        final_df[f'Competitor {i+1} Rank'] = pd.Series(comp_ranks).replace({None: 100}).astype(int)
-    
-    # Generate recommendations after all rank data is available
+    # Generate recommendations
     final_df['Recommendation'] = final_df.apply(generate_recommendations, axis=1)
     
     # Add URL columns
     final_df['Target URL'] = target_urls
-    for i in range(len(data_frames) - 1):
-        final_df[f'Competitor {i+1} URL'] = [urls[i] if urls else None for urls in competitor_urls]
+    for i in range(len(competitor_urls)):
+        final_df[f'Competitor {i+1} URL'] = competitor_urls[i]
     
-    # Reorder columns to put recommendation second
+    # Reorder columns
     rank_cols = [col for col in final_df.columns if 'Rank' in col]
     url_cols = [col for col in final_df.columns if 'URL' in col]
     final_df = final_df[['Keyword', 'Recommendation', 'Search Volume'] + rank_cols + url_cols]
