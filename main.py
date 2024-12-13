@@ -83,7 +83,7 @@ def process_competitor_data(data_frames, target_domain):
             final_df.drop(['Rank', 'URL'], axis=1, inplace=True)
     
     # Generate recommendations
-    final_df['Recommendation'] = final_df.apply(generate_recommendations, axis=1)
+    final_df['Recommendation'] = final_df.apply(lambda row: generate_recommendations(row, target_domain), axis=1)
     
     # Reorder columns to match desired format
     target_rank_col = next(col for col in final_df.columns if 'Rank' in col and target_domain.lower() in col.lower())
@@ -104,10 +104,14 @@ def calculate_average_rank(series):
         return "N/A"
     return int(round(valid_ranks.mean(), 0))  # Round to whole number
     
-def generate_recommendations(row):
+def generate_recommendations(row, target_domain):
     """Generate recommendations based on ranking positions"""
-    target_rank = row['Target Rank']
-    competitor_ranks = [row[col] for col in row.index if 'Competitor' in col and 'Rank' in col]
+    # Find the target rank column (the one containing the target domain)
+    target_rank_col = next(col for col in row.index if 'Rank' in col and target_domain.lower() in col.lower())
+    competitor_rank_cols = [col for col in row.index if 'Rank' in col and target_domain.lower() not in col.lower()]
+    
+    target_rank = row[target_rank_col]
+    competitor_ranks = [row[col] for col in competitor_rank_cols]
     competitor_ranks = [r for r in competitor_ranks if r != 100]  # Exclude non-ranking positions
     
     if target_rank == 100:
