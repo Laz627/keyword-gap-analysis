@@ -34,13 +34,20 @@ def process_competitor_data(data_frames, target_domain):
         # Standardize column names
         df.columns = [col.strip() for col in df.columns]
         
-        # Create a mapping of keywords to ranks and URLs
+        # Ensure 'Search Volume' column exists
+        if 'Search Volume' not in df.columns:
+            df['Search Volume'] = 0
+        
+        # Create a mapping of keywords to ranks, URLs, and search volume
         rank_map = dict(zip(df['Keyword'], df['Rank']))
         url_map = dict(zip(df['Keyword'], df['URL']))
+        volume_map = dict(zip(df['Keyword'], df['Search Volume']))
         
         # Add columns to combined_df
         combined_df[f'temp_rank'] = combined_df['Keyword'].map(rank_map)
         combined_df[f'temp_url'] = combined_df['Keyword'].map(url_map)
+        if 'Search Volume' not in combined_df.columns:
+            combined_df['Search Volume'] = combined_df['Keyword'].map(volume_map)
     
     # Now process URLs to identify target domain and competitors
     target_ranks = []
@@ -94,12 +101,16 @@ def process_competitor_data(data_frames, target_domain):
     # Create final DataFrame with desired column order
     final_df = pd.DataFrame()
     final_df['Keyword'] = combined_df['Keyword']
+    final_df['Search Volume'] = combined_df['Search Volume']
     
     # Convert target ranks to pandas Series before processing
     target_ranks_series = pd.Series(target_ranks)
     final_df['Target Rank'] = pd.to_numeric(target_ranks_series, errors='coerce').fillna(100).astype(int)
     
-    # Add competitor rank columns and convert to whole numbers
+    # Add recommendations right after Target Rank
+    final_df['Recommendation'] = final_df.apply(generate_recommendations, axis=1)
+    
+    # Add competitor rank columns
     for i in range(len(data_frames) - 1):
         comp_ranks = [ranks[i] if ranks else 100 for ranks in competitor_ranks]
         comp_ranks_series = pd.Series(comp_ranks)
@@ -133,16 +144,12 @@ def generate_recommendations(row):
         return "Optimize"
     else:
         return "Create New"
-
 if uploaded_files and target_domain:
     # Process the uploaded files
     data_frames = [pd.read_csv(file) for file in uploaded_files]
     
     # Combine competitor data side by side
     merged_df = process_competitor_data(data_frames, target_domain)
-    
-    # Add recommendations
-    merged_df['Recommendation'] = merged_df.apply(generate_recommendations, axis=1)
     
     # Display filters
     st.subheader("Filters")
@@ -166,70 +173,138 @@ if uploaded_files and target_domain:
         st.warning("No data to display after applying filters.")
         st.stop()
 
-    # Identify rank columns for styling
-    rank_columns = [col for col in filtered_df.columns if 'Rank' in col]
-    
-    # Display the DataFrame with styling
+    # Display the DataFrame with enhanced styling
     st.subheader("Keyword Rankings Table")
 
     try:
         # Create a copy for styling
         display_df = filtered_df.copy()
         
-        # Create a mask for styling (exclude rows where rank is 100)
-        style_masks = {}
-        for col in rank_columns:
-            style_masks[col] = display_df[col] != 100
-        
-        # Apply styling to rank columns with masks
+        # Create styler object
         styler = display_df.style
         
-        # Apply background gradient only to non-100 values
+        # Define custom CSS properties
+        styler.set_properties(**{
+            'background-color': '#f5f5f5',
+            'color': '#333333',
+            'border': '1px solid #e0e0e0',
+            'padding': '8px',
+            'text-align': 'left'
+        })
+        
+        # Style the recommendation column
+        def recommendation_style(val):
+            colors = {
+                'Defend': 'background-color: #90EE90; color: #006400',    # Light green with dark green text
+                'Optimize': 'background-color: #FFD700; color: #8B4513',  # Gold with brown text
+                'Create New': 'background-color: #FFA07A; color: #8B0000' # Light salmon with dark red text
+            }
+            return colors.get(val, '')
+        
+        styler.applymap(recommendation_style, subset=['Recommendation'])
+        
+        # Apply background gradient to rank columns (excluding 100s)
+        rank_columns = [col for col in filtered_df.columns if 'Rank' in col]
         for col in rank_columns:
-            mask = style_masks[col]
-            styler = styler.background_gradient(
+            mask = display_df[col] != 100
+            styler.background_gradient(
                 cmap='RdYlGn_r',
                 vmin=1,
-                vmax=99,
-                subset=pd.IndexSlice[mask, col]
+                vmax=30,  # Adjusted to make color differences more visible
+                subset=pd.IndexSlice[mask, col],
+                text_color_threshold=0.7
             )
         
-        # Format rank columns as integers
+        # Format rank columns as integers and search volume with comma separator
         rank_format = {col: '{:.0f}' for col in rank_columns}
-        styler = styler.format(rank_format)
+        rank_format['Search Volume'] = '{:,.0f}'
+        styler.format(rank_format)
+        
+        # Add header styling
+        styler.set_table_styles([
+            {'selector': 'thead th', 
+             'props': [('background-color', '#2c3e50'), 
+                      ('color', 'white'),
+                      ('font-weight', 'bold'),
+                      ('padding', '12px')]},
+            {'selector': 'tbody tr:nth-of-type(even)',
+             'props': [('background-color', '#f8f9fa')]},
+            {'selector': 'td', 
+             'props': [('padding', '8px'),
+                      ('border', '1px solid #dee2e6')]}
+        ])
         
         # Display the styled DataFrame
-        st.dataframe(styler, use_container_width=True)
+        st.dataframe(styler, use_container_width=True, height=600)
             
     except Exception as e:
         st.error(f"Error applying styling: {str(e)}")
         # Fallback to displaying unstyled DataFrame
         st.dataframe(display_df, use_container_width=True)
 
-    # Summary statistics with recommendations
+    # Enhanced summary statistics
     st.subheader("Summary Statistics")
-    summary_stats = pd.DataFrame({
-        'Metric': [
-            'Average Rank (excluding N/A)', 
-            'Keywords in Top 10', 
-            'Total Keywords', 
-            'Not Ranking (N/A)',
-            'Defend Keywords',
-            'Optimize Keywords',
-            'Create New Keywords'
-        ],
+    
+    # Create metrics for each competitor
+    competitor_metrics = {}
+    for i in range(1, len(data_frames)):
+        comp_col = f'Competitor {i} Rank'
+        if comp_col in filtered_df.columns:
+            competitor_metrics[f'Competitor {i}'] = [
+                calculate_average_rank(filtered_df[comp_col]),
+                len(filtered_df[filtered_df[comp_col] <= 10]),
+                len(filtered_df[filtered_df[comp_col] <= 3]),
+                len(filtered_df[filtered_df[comp_col] == 100])
+            ]
+    
+    # Create summary stats DataFrame
+    metrics = [
+        'Average Rank (excluding N/A)', 
+        'Keywords in Top 10',
+        'Keywords in Top 3',
+        'Not Ranking (N/A)',
+        'Defend Keywords',
+        'Optimize Keywords',
+        'Create New Keywords'
+    ]
+    
+    summary_data = {
+        'Metric': metrics,
         'Target': [
             calculate_average_rank(filtered_df['Target Rank']),
             len(filtered_df[filtered_df['Target Rank'] <= 10]),
-            len(filtered_df),
+            len(filtered_df[filtered_df['Target Rank'] <= 3]),
             len(filtered_df[filtered_df['Target Rank'] == 100]),
             len(filtered_df[filtered_df['Recommendation'] == 'Defend']),
             len(filtered_df[filtered_df['Recommendation'] == 'Optimize']),
             len(filtered_df[filtered_df['Recommendation'] == 'Create New'])
         ]
-    })
+    }
     
-    st.dataframe(summary_stats)
+    # Add competitor metrics
+    for comp_name, comp_metrics in competitor_metrics.items():
+        comp_data = comp_metrics + ['-', '-', '-']  # Add placeholder for recommendation metrics
+        summary_data[comp_name] = comp_data
+    
+    summary_stats = pd.DataFrame(summary_data)
+    
+    # Style the summary statistics
+    summary_styler = summary_stats.style.set_properties(**{
+        'background-color': '#f8f9fa',
+        'color': '#333333',
+        'border': '1px solid #dee2e6',
+        'padding': '12px'
+    }).set_table_styles([
+        {'selector': 'thead th', 
+         'props': [('background-color', '#2c3e50'), 
+                  ('color', 'white'),
+                  ('font-weight', 'bold'),
+                  ('padding', '12px')]},
+        {'selector': 'tbody tr:nth-of-type(even)',
+         'props': [('background-color', '#ffffff')]}
+    ])
+    
+    st.dataframe(summary_styler, use_container_width=True)
 
     # Enhanced OpenAI insights
     st.subheader("Strategic Insights")
@@ -238,66 +313,60 @@ if uploaded_files and target_domain:
         if st.button("Generate Strategic Insights"):
             openai.api_key = api_key
             
-            # Prepare detailed data analysis
-            defend_keywords = filtered_df[filtered_df['Recommendation'] == 'Defend']
-            optimize_keywords = filtered_df[filtered_df['Recommendation'] == 'Optimize']
-            create_keywords = filtered_df[filtered_df['Recommendation'] == 'Create New']
-            
-            top_defend = defend_keywords.nsmallest(5, 'Target Rank')[['Keyword', 'Target Rank']].to_dict('records')
-            top_optimize = optimize_keywords.nsmallest(5, 'Target Rank')[['Keyword', 'Target Rank']].to_dict('records')
+            # Prepare keyword opportunities sorted by search volume
+            defend_keywords = filtered_df[filtered_df['Recommendation'] == 'Defend'].sort_values(
+                by='Search Volume', ascending=False).head(20)[['Keyword', 'Search Volume', 'Target Rank']]
+            optimize_keywords = filtered_df[filtered_df['Recommendation'] == 'Optimize'].sort_values(
+                by='Search Volume', ascending=False).head(20)[['Keyword', 'Search Volume', 'Target Rank']]
+            create_keywords = filtered_df[filtered_df['Recommendation'] == 'Create New'].sort_values(
+                by='Search Volume', ascending=False).head(20)[['Keyword', 'Search Volume', 'Target Rank']]
             
             summary_prompt = f"""
-            As an SEO strategist, analyze this keyword ranking data for {target_domain}:
+            Analyze the keyword data for {target_domain} and provide:
 
-            Current Position:
-            - Ranking for {len(filtered_df[filtered_df['Target Rank'] != 100])} out of {len(filtered_df)} total keywords
-            - {len(filtered_df[filtered_df['Target Rank'] <= 10])} keywords in top 10 positions
-            - Average ranking position: {calculate_average_rank(filtered_df['Target Rank'])}
+            1. HIGH-VALUE KEYWORD OPPORTUNITIES (Top 20 by search volume):
 
-            Opportunity Breakdown:
-            1. DEFEND ({len(defend_keywords)} keywords):
-            - Top performing keywords to protect: {top_defend}
-            
-            2. OPTIMIZE ({len(optimize_keywords)} keywords):
-            - Priority optimization targets: {top_optimize}
-            
-            3. CREATE NEW ({len(create_keywords)} keywords):
-            - {len(create_keywords)} unranked or low-ranking opportunities
+            DEFEND - Current Strong Rankings:
+            {defend_keywords.to_string()}
 
-            Provide a strategic analysis with:
-            1. IMMEDIATE ACTIONS (Next 30 days):
-            - Specific, high-priority optimization targets
-            - Critical content defense strategies
-            - Quick-win opportunities
-            
-            2. COMPETITIVE ADVANTAGES:
-            - Areas where {target_domain} outperforms competitors
-            - Unique ranking opportunities
-            
-            3. CONTENT GAPS:
-            - Priority topics for new content
-            - Specific keyword clusters to target
-            
-            4. STRATEGIC RECOMMENDATIONS:
-            - Concrete steps to improve rankings
-            - Resource allocation priorities
-            - Risk mitigation strategies
-            
-            Focus on actionable insights that can drive immediate impact while building long-term SEO strength.
+            OPTIMIZE - Priority Improvement Targets:
+            {optimize_keywords.to_string()}
+
+            CREATE NEW - Highest Potential Unranked Keywords:
+            {create_keywords.to_string()}
+
+            2. QUICK DOMAIN STRENGTHS:
+            - {target_domain}: [One sentence on key ranking strengths]
+            - Competitor 1: [One sentence on key ranking strengths]
+            - Competitor 2: [One sentence on key ranking strengths]
+
+            Format the output as clear sections with bullet points.
+            Focus on search volume and ranking positions in your analysis.
             """
             
             try:
                 response = openai.ChatCompletion.create(
                     model="gpt-4o",
                     messages=[
-                        {"role": "system", "content": "You are an expert SEO strategist providing actionable insights and specific recommendations."},
+                        {"role": "system", "content": "You are an SEO analyst providing concise, data-driven keyword opportunities and brief domain performance summaries."},
                         {"role": "user", "content": summary_prompt}
                     ],
-                    temperature=0.7,
-                    max_tokens=4000
+                    temperature=0.5,
+                    max_tokens=5000
                 )
                 insights = response.choices[0].message.content
+                
+                # Format and display insights
+                st.markdown("## Keyword Opportunities and Domain Analysis")
                 st.markdown(insights)
+                
+                # Add download button for insights
+                st.download_button(
+                    label="Download Insights",
+                    data=insights,
+                    file_name="seo_insights.txt",
+                    mime="text/plain"
+                )
             except Exception as e:
                 st.error(f"Error generating insights: {e}")
     else:
