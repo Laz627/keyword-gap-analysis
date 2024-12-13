@@ -15,18 +15,6 @@ target_domain = st.sidebar.text_input("Enter the target domain (e.g., 'pella.com
 st.sidebar.header("Data Upload")
 uploaded_files = st.sidebar.file_uploader("Upload CSV Files", type=["csv"], accept_multiple_files=True)
 
-def clean_rank_data(df, rank_columns):
-    """Clean and prepare rank data for styling"""
-    df = df.copy()
-    for col in rank_columns:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors='coerce')
-            df[col] = df[col].fillna(9999)
-            df[col] = df[col].clip(1, 9999)
-    return df
-
-# ... (keep the initial imports and setup the same)
-
 def process_competitor_data(data_frames, target_domain):
     """Process and combine competitor data with specific column ordering"""
     # Initialize empty lists to store all keywords and data
@@ -97,7 +85,7 @@ def process_competitor_data(data_frames, target_domain):
         
         # Pad competitor data if needed
         while len(comp_ranks) < len(data_frames) - 1:
-            comp_ranks.append(None)
+            comp_ranks.append(100)  # Use 100 instead of None
             comp_urls.append(None)
             
         competitor_ranks.append(comp_ranks)
@@ -106,11 +94,14 @@ def process_competitor_data(data_frames, target_domain):
     # Create final DataFrame with desired column order
     final_df = pd.DataFrame()
     final_df['Keyword'] = combined_df['Keyword']
-    final_df['Target Rank'] = target_ranks
+    final_df['Target Rank'] = pd.to_numeric(target_ranks, errors='coerce').fillna(100).astype(int)
     
-    # Add competitor rank columns
+    # Add competitor rank columns and convert to whole numbers
     for i in range(len(data_frames) - 1):
-        final_df[f'Competitor {i+1} Rank'] = [ranks[i] if ranks else None for ranks in competitor_ranks]
+        comp_ranks = [ranks[i] if ranks else 100 for ranks in competitor_ranks]
+        # Convert to integers, handling any remaining NaN values
+        comp_ranks = pd.Series(comp_ranks).fillna(100).astype(int)
+        final_df[f'Competitor {i+1} Rank'] = comp_ranks
     
     # Add URL columns at the end
     final_df['Target URL'] = target_urls
@@ -156,13 +147,27 @@ if uploaded_files and target_domain:
         # Create a copy for styling
         display_df = filtered_df.copy()
         
-        # Apply styling to rank columns
-        styler = display_df.style.background_gradient(
-            subset=rank_columns,
-            cmap='RdYlGn_r',
-            vmin=1,
-            vmax=100
-        )
+        # Create a mask for styling (exclude rows where rank is 100)
+        style_masks = {}
+        for col in rank_columns:
+            style_masks[col] = display_df[col] != 100
+        
+        # Apply styling to rank columns with masks
+        styler = display_df.style
+        
+        # Apply background gradient only to non-100 values
+        for col in rank_columns:
+            mask = style_masks[col]
+            styler = styler.background_gradient(
+                cmap='RdYlGn_r',
+                vmin=1,
+                vmax=99,
+                subset=pd.IndexSlice[mask, col]
+            )
+        
+        # Format rank columns as integers
+        rank_format = {col: '{:.0f}' for col in rank_columns}
+        styler = styler.format(rank_format)
         
         # Display the styled DataFrame
         st.dataframe(styler, use_container_width=True)
@@ -172,7 +177,7 @@ if uploaded_files and target_domain:
         # Fallback to displaying unstyled DataFrame
         st.dataframe(display_df, use_container_width=True)
 
-    # Add summary statistics
+    # Summary statistics
     st.subheader("Summary Statistics")
     summary_stats = pd.DataFrame({
         'Metric': ['Average Rank (excluding N/A)', 'Keywords in Top 10', 'Total Keywords', 'Not Ranking (N/A)'],
@@ -188,11 +193,12 @@ if uploaded_files and target_domain:
     for i in range(1, len(data_frames)):
         comp_rank_col = f'Competitor {i} Rank'
         if comp_rank_col in filtered_df.columns:
+            comp_ranks = filtered_df[comp_rank_col].fillna(100).astype(int)
             summary_stats[f'Competitor {i}'] = [
-                calculate_average_rank(filtered_df[comp_rank_col]),
-                len(filtered_df[filtered_df[comp_rank_col] <= 10]),
+                calculate_average_rank(comp_ranks),
+                len(comp_ranks[comp_ranks <= 10]),
                 len(filtered_df),
-                len(filtered_df[filtered_df[comp_rank_col] == 100])
+                len(comp_ranks[comp_ranks == 100])
             ]
     
     st.dataframe(summary_stats)
