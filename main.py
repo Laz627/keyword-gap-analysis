@@ -144,17 +144,28 @@ def generate_recommendations(row):
         return "Defend"
 
 def get_top_keywords_by_category(df, domain_type='target'):
-    """Get top 50 keywords sorted by search volume and rank"""
+    """Get top 50 keywords sorted by rank then search volume"""
     if domain_type == 'target':
-        # For target domain, sort by search volume within each recommendation category
+        # For target domain, sort by rank then search volume within each recommendation category
         defend_kw = df[df['Recommendation'] == 'Defend'].sort_values(
-            by='Search Volume', ascending=False).head(50)[['Keyword', 'Search Volume', 'Target Rank']]
+            by=['Target Rank', 'Search Volume'], 
+            ascending=[True, False]  # Ascending for rank (better ranks first), descending for search volume
+        ).head(50)[['Keyword', 'Search Volume', 'Target Rank']]
+        
         optimize_kw = df[df['Recommendation'] == 'Optimize'].sort_values(
-            by='Search Volume', ascending=False).head(50)[['Keyword', 'Search Volume', 'Target Rank']]
+            by=['Target Rank', 'Search Volume'], 
+            ascending=[True, False]
+        ).head(50)[['Keyword', 'Search Volume', 'Target Rank']]
+        
         larger_adjust_kw = df[df['Recommendation'] == 'Larger Adjustments'].sort_values(
-            by='Search Volume', ascending=False).head(50)[['Keyword', 'Search Volume', 'Target Rank']]
+            by=['Target Rank', 'Search Volume'], 
+            ascending=[True, False]
+        ).head(50)[['Keyword', 'Search Volume', 'Target Rank']]
+        
         create_kw = df[df['Recommendation'] == 'Create New'].sort_values(
-            by='Search Volume', ascending=False).head(50)[['Keyword', 'Search Volume', 'Target Rank']]
+            by='Search Volume', ascending=False  # Only search volume for Create New since all ranks are 100
+        ).head(50)[['Keyword', 'Search Volume', 'Target Rank']]
+        
         return {
             'Defend Keywords': defend_kw,
             'Optimize Keywords': optimize_kw,
@@ -162,47 +173,27 @@ def get_top_keywords_by_category(df, domain_type='target'):
             'Create New Keywords': create_kw
         }
     else:
-        # For competitors, first sort by rank, then by search volume
+        # For competitors, same logic as before
         comp_rank_col = f'{domain_type} Rank'
         return df[df[comp_rank_col] != 100].sort_values(
-            by=[comp_rank_col, 'Search Volume'],  # Sort by rank first, then search volume
-            ascending=[True, False]  # Ascending for rank (better ranks first), descending for search volume
+            by=[comp_rank_col, 'Search Volume'],
+            ascending=[True, False]
         ).head(50)[['Keyword', 'Search Volume', comp_rank_col]]
 
-if uploaded_files and target_domain:
-    # Process the uploaded files
-    data_frames = [pd.read_csv(file) for file in uploaded_files]
-    
-    # Combine competitor data side by side
-    merged_df = process_competitor_data(data_frames, target_domain)
-    
-    # Display filters
-    st.subheader("Filters")
-    col1, col2 = st.columns(2)
-    with col1:
-        keyword_filter = st.text_input("Filter by keyword:")
-    with col2:
-        recommendation_filter = st.selectbox(
-            "Filter by recommendation:",
-            ["All", "Defend", "Optimize", "Larger Adjustments", "Create New"]
-        )
-    
+# After filtering
     filtered_df = merged_df.copy()
     if keyword_filter:
         filtered_df = filtered_df[filtered_df["Keyword"].str.contains(keyword_filter, case=False, na=False)]
     if recommendation_filter != "All":
         filtered_df = filtered_df[filtered_df["Recommendation"] == recommendation_filter]
 
+    # Sort the entire DataFrame by Search Volume
+    filtered_df = filtered_df.sort_values(by='Search Volume', ascending=False)
+
     # Check if filtered DataFrame is empty
     if filtered_df.empty:
         st.warning("No data to display after applying filters.")
         st.stop()
-
-    # Display the DataFrame with styling
-    st.subheader("Keyword Rankings Table")
-
-    try:
-        display_df = filtered_df.copy()
         
         # Create styler object
         styler = display_df.style
