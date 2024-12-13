@@ -246,7 +246,7 @@ try:
         
         # Display the styled DataFrame
         st.dataframe(styler, use_container_width=True, height=600)
-            
+    
     except Exception as e:
         st.error(f"Error applying styling: {str(e)}")
         # Fallback to displaying unstyled DataFrame
