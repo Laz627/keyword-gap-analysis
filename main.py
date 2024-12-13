@@ -25,37 +25,106 @@ def clean_rank_data(df, rank_columns):
             df[col] = df[col].clip(1, 9999)
     return df
 
+# ... (keep the initial imports and setup the same)
+
 def process_competitor_data(data_frames, target_domain):
-    """Process and combine competitor data side by side"""
-    # Initialize an empty DataFrame to store the combined results
-    combined_df = None
+    """Process and combine competitor data with specific column ordering"""
+    # Initialize empty lists to store all keywords and data
+    all_keywords = set()
+    all_data = []
     
-    for idx, df in enumerate(data_frames):
+    # Collect all unique keywords
+    for df in data_frames:
+        all_keywords.update(df['Keyword'].unique())
+    
+    # Create a base DataFrame with all keywords
+    combined_df = pd.DataFrame(list(all_keywords), columns=['Keyword'])
+    
+    # Process each dataframe
+    for df in data_frames:
         df = df.copy()
         # Standardize column names
         df.columns = [col.strip() for col in df.columns]
         
-        # Identify if this is target domain's data or competitor data
-        is_target = idx == 0  # Assuming first file is target domain
-        prefix = "Target_" if is_target else f"Competitor_{idx}_"
+        # Create a mapping of keywords to ranks and URLs
+        rank_map = dict(zip(df['Keyword'], df['Rank']))
+        url_map = dict(zip(df['Keyword'], df['URL']))
         
-        # Rename columns to prevent conflicts
-        df = df.rename(columns={
-            'Keyword': 'Keyword',
-            'URL': f'{prefix}URL',
-            'Rank': f'{prefix}Rank',
-            'Search Volume': 'Search Volume'  # Keep one copy of search volume
-        })
-        
-        if combined_df is None:
-            combined_df = df
-        else:
-            # Merge on keyword
-            combined_df = pd.merge(combined_df, df[['Keyword', f'{prefix}URL', f'{prefix}Rank']], 
-                                 on='Keyword', 
-                                 how='outer')
+        # Add columns to combined_df
+        combined_df[f'temp_rank'] = combined_df['Keyword'].map(rank_map)
+        combined_df[f'temp_url'] = combined_df['Keyword'].map(url_map)
     
-    return combined_df
+    # Now process URLs to identify target domain and competitors
+    target_ranks = []
+    target_urls = []
+    competitor_ranks = []
+    competitor_urls = []
+    
+    # Process each row
+    for idx, row in combined_df.iterrows():
+        keyword_data = []
+        for df in data_frames:
+            mask = df['Keyword'] == row['Keyword']
+            if mask.any():
+                url = df.loc[mask, 'URL'].iloc[0]
+                rank = df.loc[mask, 'Rank'].iloc[0]
+                keyword_data.append((url, rank))
+            else:
+                keyword_data.append((None, None))
+        
+        # Find target domain data
+        target_found = False
+        target_rank = 100  # Default to 100 if not found
+        target_url = None
+        
+        for url, rank in keyword_data:
+            if url and target_domain.lower() in str(url).lower():
+                target_found = True
+                target_rank = rank
+                target_url = url
+                break
+        
+        target_ranks.append(target_rank)
+        target_urls.append(target_url)
+        
+        # Collect competitor data (excluding target domain)
+        comp_ranks = []
+        comp_urls = []
+        for url, rank in keyword_data:
+            if url and (not target_domain.lower() in str(url).lower()):
+                comp_ranks.append(rank)
+                comp_urls.append(url)
+        
+        # Pad competitor data if needed
+        while len(comp_ranks) < len(data_frames) - 1:
+            comp_ranks.append(None)
+            comp_urls.append(None)
+            
+        competitor_ranks.append(comp_ranks)
+        competitor_urls.append(comp_urls)
+    
+    # Create final DataFrame with desired column order
+    final_df = pd.DataFrame()
+    final_df['Keyword'] = combined_df['Keyword']
+    final_df['Target Rank'] = target_ranks
+    
+    # Add competitor rank columns
+    for i in range(len(data_frames) - 1):
+        final_df[f'Competitor {i+1} Rank'] = [ranks[i] if ranks else None for ranks in competitor_ranks]
+    
+    # Add URL columns at the end
+    final_df['Target URL'] = target_urls
+    for i in range(len(data_frames) - 1):
+        final_df[f'Competitor {i+1} URL'] = [urls[i] if urls else None for urls in competitor_urls]
+    
+    return final_df
+
+def calculate_average_rank(series):
+    """Calculate average rank excluding 100 values (which represent N/A)"""
+    valid_ranks = series[series != 100]
+    if len(valid_ranks) == 0:
+        return "N/A"
+    return round(valid_ranks.mean(), 2)
 
 if uploaded_files and target_domain:
     # Process the uploaded files
@@ -80,9 +149,6 @@ if uploaded_files and target_domain:
     # Identify rank columns for styling
     rank_columns = [col for col in filtered_df.columns if 'Rank' in col]
     
-    # Clean the rank data
-    filtered_df = clean_rank_data(filtered_df, rank_columns)
-
     # Display the DataFrame with styling
     st.subheader("Keyword Rankings Table")
 
@@ -90,7 +156,7 @@ if uploaded_files and target_domain:
         # Create a copy for styling
         display_df = filtered_df.copy()
         
-        # Apply styling
+        # Apply styling to rank columns
         styler = display_df.style.background_gradient(
             subset=rank_columns,
             cmap='RdYlGn_r',
@@ -109,22 +175,24 @@ if uploaded_files and target_domain:
     # Add summary statistics
     st.subheader("Summary Statistics")
     summary_stats = pd.DataFrame({
-        'Metric': ['Average Rank', 'Keywords in Top 10', 'Total Keywords'],
+        'Metric': ['Average Rank (excluding N/A)', 'Keywords in Top 10', 'Total Keywords', 'Not Ranking (N/A)'],
         'Target': [
-            filtered_df['Target_Rank'].mean(),
-            len(filtered_df[filtered_df['Target_Rank'] <= 10]),
-            len(filtered_df)
+            calculate_average_rank(filtered_df['Target Rank']),
+            len(filtered_df[filtered_df['Target Rank'] <= 10]),
+            len(filtered_df),
+            len(filtered_df[filtered_df['Target Rank'] == 100])
         ]
     })
     
     # Add competitor stats
     for i in range(1, len(data_frames)):
-        comp_rank_col = f'Competitor_{i}_Rank'
+        comp_rank_col = f'Competitor {i} Rank'
         if comp_rank_col in filtered_df.columns:
             summary_stats[f'Competitor {i}'] = [
-                filtered_df[comp_rank_col].mean(),
+                calculate_average_rank(filtered_df[comp_rank_col]),
                 len(filtered_df[filtered_df[comp_rank_col] <= 10]),
-                len(filtered_df)
+                len(filtered_df),
+                len(filtered_df[filtered_df[comp_rank_col] == 100])
             ]
     
     st.dataframe(summary_stats)
