@@ -2,10 +2,9 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from io import BytesIO
-import openai
 import openpyxl
 from openpyxl.styles import PatternFill, Font, Color, Border, Side, Alignment
-from openpyxl.formatting.rule import ColorScaleRule
+from openpyxl.formatting.rule import ColorScaleRule, Rule
 
 # Streamlit app configuration
 st.set_page_config(page_title="Keyword Ranking Analysis", layout="wide")
@@ -91,7 +90,7 @@ def process_competitor_data(data_frames, target_domain):
     final_df['Keyword'] = combined_df['Keyword']
     final_df['Search Volume'] = combined_df['Search Volume']
     
-    # Add target rank (convert numpy array to pandas Series first)
+    # Add target rank
     final_df['Target Rank'] = pd.Series(target_ranks).replace({None: 100}).astype(int)
     
     # Add competitor rank columns
@@ -141,6 +140,25 @@ def generate_recommendations(row):
     else:  # If no competitors are ranking
         return "Defend"
 
+def get_top_keywords_by_category(df, domain_type='target'):
+    """Get top 20 keywords by search volume for each category"""
+    if domain_type == 'target':
+        defend_kw = df[df['Recommendation'] == 'Defend'].sort_values(
+            by='Search Volume', ascending=False).head(20)[['Keyword', 'Search Volume', 'Target Rank']]
+        optimize_kw = df[df['Recommendation'] == 'Optimize'].sort_values(
+            by='Search Volume', ascending=False).head(20)[['Keyword', 'Search Volume', 'Target Rank']]
+        create_kw = df[df['Recommendation'] == 'Create New'].sort_values(
+            by='Search Volume', ascending=False).head(20)[['Keyword', 'Search Volume', 'Target Rank']]
+        return {
+            'Defend Keywords': defend_kw,
+            'Optimize Keywords': optimize_kw,
+            'Create New Keywords': create_kw
+        }
+    else:
+        # For competitors, just get top 20 overall
+        return df[df[f'{domain_type} Rank'] != 100].sort_values(
+            by='Search Volume', ascending=False).head(20)[['Keyword', 'Search Volume', f'{domain_type} Rank']]
+
 if uploaded_files and target_domain:
     # Process the uploaded files
     data_frames = [pd.read_csv(file) for file in uploaded_files]
@@ -170,11 +188,11 @@ if uploaded_files and target_domain:
         st.warning("No data to display after applying filters.")
         st.stop()
 
-# Display the DataFrame with styling
+    # Display the DataFrame with styling
     st.subheader("Keyword Rankings Table")
 
     try:
-        display_df = filtered_df.copy()  # Create copy outside the try block
+        display_df = filtered_df.copy()
         
         # Create styler object
         styler = display_df.style
@@ -226,7 +244,6 @@ if uploaded_files and target_domain:
     
     except Exception as e:
         st.error(f"Error applying styling: {str(e)}")
-        # Display unstyled DataFrame
         st.dataframe(filtered_df, use_container_width=True)
 
     # Summary statistics
@@ -266,121 +283,86 @@ if uploaded_files and target_domain:
                 '-'
             ]
     
-    st.dataframe(summary_stats, use_container_width=True)
+    # Style the summary statistics
+    summary_styler = summary_stats.style.set_properties(**{
+        'text-align': 'left',
+        'padding': '12px'
+    }).set_table_styles([
+        {'selector': 'thead th', 
+         'props': [('background-color', '#2c3e50'), 
+                  ('color', 'white'),
+                  ('font-weight', 'bold'),
+                  ('padding', '12px'),
+                  ('text-align', 'left')]},
+        {'selector': 'tbody tr:nth-of-type(even)',
+         'props': [('background-color', '#f8f9fa')]}
+    ])
+    
+    st.dataframe(summary_styler, use_container_width=True)
 
-# Enhanced OpenAI insights
-    st.subheader("Strategic Insights")
-    api_key = st.sidebar.text_input("Enter your OpenAI API key", type="password")
-    if api_key:
-        if st.button("Generate Strategic Insights"):
-            openai.api_key = api_key
-            
-            # Get top 20 keywords by search volume for target domain and competitors
-            def get_top_keywords(df, rank_column, max_rank=100):
-                return df[df[rank_column] != 100].sort_values(
-                    by='Search Volume', ascending=False
-                ).head(20)[['Keyword', 'Search Volume', rank_column]].to_dict('records')
-            
-            # Target domain top keywords
-            target_top_keywords = get_top_keywords(filtered_df, 'Target Rank')
-            
-            # Competitor top keywords
-            competitor_keywords = {}
-            for i in range(1, len(data_frames)):
-                comp_col = f'Competitor {i} Rank'
-                if comp_col in filtered_df.columns:
-                    competitor_keywords[f'Competitor {i}'] = get_top_keywords(filtered_df, comp_col)
-            
-            # Format keyword data for the prompt
-            def format_keyword_list(keywords):
-                return "\n".join([
-                    f"- {kw['Keyword']} "
-                    f"(Search Volume: {kw['Search Volume']:,}, "
-                    f"Rank: {list(kw.values())[2]})"
-                    for kw in keywords
-                ])
-            
-            summary_prompt = f"""
-            Analyze the top-performing keywords (by search volume) for {target_domain} and competitors:
+    # Display top keywords
+    st.subheader("Top Keywords by Search Volume")
+    
+    # Get top keywords for target domain
+    target_top_kw = get_top_keywords_by_category(filtered_df, 'target')
+    
+    # Display target domain top keywords by category
+    for category, df in target_top_kw.items():
+        st.write(f"\n{category}:")
+        st.dataframe(df, use_container_width=True)
+    
+    # Get and display competitor top keywords
+    for i in range(1, len(data_frames)):
+        comp_col = f'Competitor {i}'
+        if f'{comp_col} Rank' in filtered_df.columns:
+            st.write(f"\n{comp_col} Top Keywords:")
+            comp_top_kw = get_top_keywords_by_category(filtered_df, comp_col)
+            st.dataframe(comp_top_kw, use_container_width=True)
 
-            1. {target_domain} TOP 20 RANKINGS:
-            {format_keyword_list(target_top_keywords)}
-
-            2. COMPETITOR RANKINGS:
-            """
-            
-            # Add competitor sections to prompt
-            for comp_name, comp_keywords in competitor_keywords.items():
-                summary_prompt += f"\n\n{comp_name} TOP 20 RANKINGS:\n"
-                summary_prompt += format_keyword_list(comp_keywords)
-            
-            summary_prompt += """
-            
-            Please provide:
-            1. KEY INSIGHTS FOR EACH DOMAIN:
-            - Identify each domain's strongest keyword themes
-            - Note any unique high-value keywords
-            - Highlight competitive advantages in specific areas
-            
-            2. COMPETITIVE GAP ANALYSIS:
-            - Identify valuable keywords where competitors rank but target domain doesn't
-            - Highlight opportunities where target domain can improve existing rankings
-            - Note any patterns in competitor keyword strategies
-            
-            Format the output with clear headers and bullet points.
-            Focus on search volume and ranking positions in your analysis.
-            Prioritize actionable insights based on search volume and ranking patterns.
-            """
-            
-            try:
-                response = openai.ChatCompletion.create(
-                    model="gpt-4o",
-                    messages=[
-                        {"role": "system", "content": "You are an SEO analyst providing concise, data-driven keyword analysis with a focus on competitive advantages and opportunities."},
-                        {"role": "user", "content": summary_prompt}
-                    ],
-                    temperature=0.6,
-                    max_tokens=2000
-                )
-                insights = response.choices[0].message.content
-                
-                # Format and display insights with Streamlit
-                st.markdown("## Keyword Performance Analysis")
-                st.markdown(insights)
-                
-                # Add download button for insights
-                st.download_button(
-                    label="Download Insights",
-                    data=insights,
-                    file_name="keyword_analysis.txt",
-                    mime="text/plain"
-                )
-            except Exception as e:
-                st.error(f"Error generating insights: {e}")
-    else:
-        st.warning("Provide your OpenAI API key to generate strategic insights.")
-
-# Export to Excel with styling
+    # Export to Excel
     st.subheader("Export Data")
     if st.button("Download Excel"):
         buffer = BytesIO()
         with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-            # Write the DataFrame
+            # Write main rankings sheet
             filtered_df.to_excel(writer, index=False, sheet_name="Rankings")
             
-            # Get the workbook and worksheet
+            # Write summary statistics
+            summary_stats.to_excel(writer, index=False, sheet_name="Summary")
+            
+            # Get and write top keywords
+            target_top_kw = get_top_keywords_by_category(filtered_df, 'target')
+            competitor_top_kw = {}
+            for i in range(1, len(data_frames)):
+                comp_col = f'Competitor {i}'
+                if f'{comp_col} Rank' in filtered_df.columns:
+                    competitor_top_kw[comp_col] = get_top_keywords_by_category(filtered_df, comp_col)
+            
+            # Create Top Keywords sheet
+            with pd.ExcelWriter(buffer, engine="openpyxl", mode='a') as writer:
+                row_position = 0
+                
+                # Write target domain top keywords
+                for category, df in target_top_kw.items():
+                    df.to_excel(writer, sheet_name="Top Keywords", 
+                              startrow=row_position, index=False)
+                    row_position += len(df) + 3  # Add space between categories
+                
+                # Write competitor top keywords
+                for comp_name, comp_df in competitor_top_kw.items():
+                    comp_df.to_excel(writer, sheet_name="Top Keywords", 
+                                   startrow=row_position, index=False)
+                    row_position += len(comp_df) + 3
+
+# Get workbook and worksheets
             workbook = writer.book
-            worksheet = writer.sheets["Rankings"]
+            rankings_ws = workbook["Rankings"]
+            summary_ws = workbook["Summary"]
+            top_kw_ws = workbook["Top Keywords"]
             
             # Define styles
-            from openpyxl.styles import PatternFill, Font, Color, Border, Side, Alignment
-            from openpyxl.formatting.rule import ColorScaleRule
-            
-            # Header style
             header_fill = PatternFill(start_color="2C3E50", end_color="2C3E50", fill_type="solid")
             header_font = Font(color="FFFFFF", bold=True)
-            
-            # Cell border
             thin_border = Border(
                 left=Side(style='thin', color='DEE2E6'),
                 right=Side(style='thin', color='DEE2E6'),
@@ -388,24 +370,36 @@ if uploaded_files and target_domain:
                 bottom=Side(style='thin', color='DEE2E6')
             )
             
-            # Apply header styling
-            for cell in worksheet[1]:
-                cell.fill = header_fill
-                cell.font = header_font
-                cell.border = thin_border
-                cell.alignment = Alignment(horizontal='left')
+            # Function to apply basic styling to a worksheet
+            def apply_basic_styling(ws):
+                # Style headers
+                for cell in ws[1]:
+                    cell.fill = header_fill
+                    cell.font = header_font
+                    cell.border = thin_border
+                    cell.alignment = Alignment(horizontal='left')
+                
+                # Style all cells
+                for row in ws.iter_rows(min_row=2):
+                    for cell in row:
+                        cell.border = thin_border
+                        cell.alignment = Alignment(horizontal='left')
+                
+                # Freeze top row
+                ws.freeze_panes = 'A2'
             
-            # Get column letters for rank columns
+            # Apply basic styling to all sheets
+            for ws in [rankings_ws, summary_ws, top_kw_ws]:
+                apply_basic_styling(ws)
+            
+            # Rankings sheet specific styling
             rank_columns = [col for col in filtered_df.columns if 'Rank' in col]
-            rank_column_letters = []
             for col in rank_columns:
-                col_idx = filtered_df.columns.get_loc(col) + 1  # +1 because Excel is 1-based
-                rank_column_letters.append(openpyxl.utils.get_column_letter(col_idx))
-            
-            # Apply conditional formatting to rank columns
-            for col_letter in rank_column_letters:
-                # Color scale for ranks (excluding 100)
-                worksheet.conditional_formatting.add(
+                col_idx = filtered_df.columns.get_loc(col) + 1
+                col_letter = openpyxl.utils.get_column_letter(col_idx)
+                
+                # Add color scale for ranks 1-99
+                rankings_ws.conditional_formatting.add(
                     f'{col_letter}2:{col_letter}{len(filtered_df) + 1}',
                     ColorScaleRule(
                         start_type='num',
@@ -415,43 +409,61 @@ if uploaded_files and target_domain:
                         mid_value=15,
                         mid_color='FFEB84',  # Yellow
                         end_type='num',
-                        end_value=30,
+                        end_value=99,
                         end_color='F8696B'  # Red
                     )
                 )
+                
+                # Add light gray for rank 100
+                rankings_ws.conditional_formatting.add(
+                    f'{col_letter}2:{col_letter}{len(filtered_df) + 1}',
+                    Rule(
+                        type="cellIs",
+                        operator="equal",
+                        formula=['100'],
+                        fill=PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
+                    )
+                )
             
-            # Format number columns
-            for row in worksheet.iter_rows(min_row=2):
-                for cell in row:
-                    cell.border = thin_border
-                    cell.alignment = Alignment(horizontal='left')
+            # Format numbers in all sheets
+            for ws in [rankings_ws, summary_ws, top_kw_ws]:
+                for row in ws.iter_rows(min_row=2):
+                    for cell in row:
+                        column_header = ws.cell(1, cell.column).value
+                        if 'Search Volume' in str(column_header):
+                            cell.number_format = '#,##0'
+                        elif 'Rank' in str(column_header):
+                            cell.number_format = '0'
+            
+            # Auto-fit columns and wrap URLs
+            for ws in [rankings_ws, summary_ws, top_kw_ws]:
+                for column in ws.columns:
+                    max_length = 0
+                    column = [cell for cell in column]
+                    is_url_column = 'URL' in str(column[0].value)
                     
-                    # Format Search Volume with thousands separator
-                    if openpyxl.utils.get_column_letter(cell.column) == openpyxl.utils.get_column_letter(filtered_df.columns.get_loc('Search Volume') + 1):
-                        cell.number_format = '#,##0'
-                    
-                    # Format rank columns as integers
-                    if openpyxl.utils.get_column_letter(cell.column) in rank_column_letters:
-                        cell.number_format = '0'
+                    if is_url_column:
+                        # Set fixed width for URL columns and wrap text
+                        ws.column_dimensions[column[0].column_letter].width = 50
+                        for cell in column:
+                            cell.alignment = Alignment(wrap_text=True)
+                    else:
+                        # Calculate max length for other columns
+                        for cell in column:
+                            try:
+                                if len(str(cell.value)) > max_length:
+                                    max_length = len(str(cell.value))
+                            except:
+                                pass
+                        adjusted_width = (max_length + 2)
+                        ws.column_dimensions[column[0].column_letter].width = min(adjusted_width, 40)
             
-            # Set column widths
-            for idx, col in enumerate(filtered_df.columns):
-                column_letter = openpyxl.utils.get_column_letter(idx + 1)
-                if 'URL' in col:
-                    worksheet.column_dimensions[column_letter].width = 50
-                elif 'Keyword' in col:
-                    worksheet.column_dimensions[column_letter].width = 30
-                else:
-                    worksheet.column_dimensions[column_letter].width = 15
-            
-            # Alternate row colors
-            for row in range(2, len(filtered_df) + 2):  # Start from row 2 (after header)
-                if row % 2 == 0:  # Even rows
-                    for cell in worksheet[row]:
-                        cell.fill = PatternFill(start_color="F8F9FA", end_color="F8F9FA", fill_type="solid")
-            
-            # Freeze header row
-            worksheet.freeze_panes = 'A2'
+            # Add alternating row colors
+            for ws in [rankings_ws, summary_ws, top_kw_ws]:
+                for row in range(2, ws.max_row + 1):
+                    if row % 2 == 0:
+                        for cell in ws[row]:
+                            cell.fill = PatternFill(start_color="F8F9FA", end_color="F8F9FA", fill_type="solid")
         
         buffer.seek(0)
         st.download_button(
