@@ -10,7 +10,7 @@ st.title("Keyword Ranking Analysis")
 
 # Sidebar inputs
 st.sidebar.header("Target Domain")
-target_domain = st.sidebar.text_input("Enter the target domain (e.g. 'pella.com')")
+target_domain = st.sidebar.text_input("Enter the target domain (e.g., 'pella.com')")
 
 st.sidebar.header("Data Upload")
 uploaded_files = st.sidebar.file_uploader("Upload CSV Files", type=["csv"], accept_multiple_files=True)
@@ -35,26 +35,19 @@ if uploaded_files and target_domain:
     # Standardize column names
     merged_df.columns = [col.strip() for col in merged_df.columns]
 
-    # Identify domains from uploaded files
-    domain_columns = [col for col in merged_df.columns if col.lower().startswith("url") or col.lower().startswith("rank")]
+    # Identify target domain's rank and URL based on URL column values
+    merged_df["Target Domain"] = merged_df["URL"].apply(lambda x: target_domain in str(x).lower())
+    target_rows = merged_df[merged_df["Target Domain"]]
 
-    # Split columns into rank and URL for each domain
-    rank_columns = [col for col in domain_columns if "rank" in col.lower()]
-    url_columns = [col for col in domain_columns if "url" in col.lower()]
-    
-    # Target domain rank and URL columns
-    target_rank_column = [col for col in rank_columns if target_domain in col.lower()]
-    target_url_column = [col for col in url_columns if target_domain in col.lower()]
-    
-    if not target_rank_column or not target_url_column:
-        st.error(f"Target domain '{target_domain}' not found in the uploaded data.")
+    if target_rows.empty:
+        st.error(f"Target domain '{target_domain}' not found in the uploaded data URLs.")
         st.stop()
 
-    target_rank_column = target_rank_column[0]
-    target_url_column = target_url_column[0]
+    target_rank_column = "Rank"
+    target_url_column = "URL"
 
     # Competitor rank columns
-    competitor_rank_columns = [col for col in rank_columns if col != target_rank_column]
+    competitor_rank_columns = ["Rank"] if len(data_frames) > 1 else []
 
     # Generate recommendations
     merged_df["Recommendation"] = merged_df.apply(
