@@ -434,23 +434,23 @@ if uploaded_files and target_domain:
                     )
                 )
                 
-                # Then add color scale only for ranks 1-99
+                # Then add color scale for ranks 1-99 using fixed values
                 rankings_ws.conditional_formatting.add(
                     f'{col_letter}2:{col_letter}{len(filtered_df) + 1}',
                     ColorScaleRule(
-                        start_type='percentile',
-                        start_value=0,
+                        start_type='num',
+                        start_value=1,
                         start_color='63BE7B',  # Green
-                        mid_type='percentile',
-                        mid_value=50,
+                        mid_type='num',
+                        mid_value=25,  # Midpoint at rank 25
                         mid_color='FFEB84',  # Yellow
-                        end_type='percentile',
-                        end_value=100,
-                        end_color='F8696B',  # Red
+                        end_type='num',
+                        end_value=50,  # End at rank 50
+                        end_color='F8696B'  # Red
                     )
                 )
 
-                # Add number formatting
+                # Add number formatting and ensure rank 100 is gray
                 for cell in rankings_ws[col_letter][1:]:
                     cell.number_format = '0'
                     if cell.value == 100:
