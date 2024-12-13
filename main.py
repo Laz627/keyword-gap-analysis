@@ -14,6 +14,7 @@ target_domain = st.sidebar.text_input("Enter the target domain (e.g., 'pella.com
 
 st.sidebar.header("Data Upload")
 uploaded_files = st.sidebar.file_uploader("Upload CSV Files", type=["csv"], accept_multiple_files=True)
+
 def process_competitor_data(data_frames, target_domain):
     """Process and combine competitor data with specific column ordering"""
     # Initialize empty lists to store all keywords and data
@@ -36,23 +37,13 @@ def process_competitor_data(data_frames, target_domain):
     # Process each dataframe
     for df in data_frames:
         df = df.copy()
-        # Standardize column names
-        df.columns = [col.strip() for col in df.columns]
-        
-        # Ensure 'Search Volume' column exists
-        if 'Search Volume' not in df.columns:
-            df['Search Volume'] = 0
-        
-        # Create a mapping of keywords to ranks, URLs, and search volume
+        # Create a mapping of keywords to ranks and URLs
         rank_map = dict(zip(df['Keyword'], df['Rank']))
         url_map = dict(zip(df['Keyword'], df['URL']))
-        volume_map = dict(zip(df['Keyword'], df['Search Volume']))
         
         # Add columns to combined_df
         combined_df[f'temp_rank'] = combined_df['Keyword'].map(rank_map)
         combined_df[f'temp_url'] = combined_df['Keyword'].map(url_map)
-        if 'Search Volume' not in combined_df.columns:
-            combined_df['Search Volume'] = combined_df['Keyword'].map(volume_map)
     
     # Now process URLs to identify target domain and competitors
     target_ranks = []
@@ -107,8 +98,6 @@ def process_competitor_data(data_frames, target_domain):
     final_df = pd.DataFrame()
     final_df['Keyword'] = combined_df['Keyword']
     final_df['Search Volume'] = combined_df['Search Volume']
-    final_df['Target Rank'] = pd.to_numeric(target_ranks_series, errors='coerce').fillna(100).astype(int)
-    final_df['Recommendation'] = final_df.apply(generate_recommendations, axis=1)
     
     # Convert target ranks to pandas Series before processing
     target_ranks_series = pd.Series(target_ranks)
@@ -151,6 +140,7 @@ def generate_recommendations(row):
         return "Optimize"
     else:
         return "Create New"
+
 if uploaded_files and target_domain:
     # Process the uploaded files
     data_frames = [pd.read_csv(file) for file in uploaded_files]
@@ -180,10 +170,10 @@ if uploaded_files and target_domain:
         st.warning("No data to display after applying filters.")
         st.stop()
 
-    # Display the DataFrame with enhanced styling
+    # Display the DataFrame with styling
     st.subheader("Keyword Rankings Table")
 
-try:
+    try:
         # Create a copy for styling
         display_df = filtered_df.copy()
         
@@ -246,40 +236,22 @@ try:
         
         # Display the styled DataFrame
         st.dataframe(styler, use_container_width=True, height=600)
-    
     except Exception as e:
         st.error(f"Error applying styling: {str(e)}")
-        # Fallback to displaying unstyled DataFrame
         st.dataframe(display_df, use_container_width=True)
 
-    # Enhanced summary statistics
+    # Summary statistics
     st.subheader("Summary Statistics")
-    
-    # Create metrics for each competitor
-    competitor_metrics = {}
-    for i in range(1, len(data_frames)):
-        comp_col = f'Competitor {i} Rank'
-        if comp_col in filtered_df.columns:
-            competitor_metrics[f'Competitor {i}'] = [
-                calculate_average_rank(filtered_df[comp_col]),
-                len(filtered_df[filtered_df[comp_col] <= 10]),
-                len(filtered_df[filtered_df[comp_col] <= 3]),
-                len(filtered_df[filtered_df[comp_col] == 100])
-            ]
-    
-    # Create summary stats DataFrame
-    metrics = [
-        'Average Rank (excluding N/A)', 
-        'Keywords in Top 10',
-        'Keywords in Top 3',
-        'Not Ranking (N/A)',
-        'Defend Keywords',
-        'Optimize Keywords',
-        'Create New Keywords'
-    ]
-    
-    summary_data = {
-        'Metric': metrics,
+    summary_stats = pd.DataFrame({
+        'Metric': [
+            'Average Rank (excluding N/A)', 
+            'Keywords in Top 10',
+            'Keywords in Top 3',
+            'Not Ranking (N/A)',
+            'Defend Keywords',
+            'Optimize Keywords',
+            'Create New Keywords'
+        ],
         'Target': [
             calculate_average_rank(filtered_df['Target Rank']),
             len(filtered_df[filtered_df['Target Rank'] <= 10]),
@@ -289,32 +261,23 @@ try:
             len(filtered_df[filtered_df['Recommendation'] == 'Optimize']),
             len(filtered_df[filtered_df['Recommendation'] == 'Create New'])
         ]
-    }
+    })
     
     # Add competitor metrics
-    for comp_name, comp_metrics in competitor_metrics.items():
-        comp_data = comp_metrics + ['-', '-', '-']  # Add placeholder for recommendation metrics
-        summary_data[comp_name] = comp_data
+    for i in range(1, len(data_frames)):
+        comp_col = f'Competitor {i} Rank'
+        if comp_col in filtered_df.columns:
+            summary_stats[f'Competitor {i}'] = [
+                calculate_average_rank(filtered_df[comp_col]),
+                len(filtered_df[filtered_df[comp_col] <= 10]),
+                len(filtered_df[filtered_df[comp_col] <= 3]),
+                len(filtered_df[filtered_df[comp_col] == 100]),
+                '-',
+                '-',
+                '-'
+            ]
     
-    summary_stats = pd.DataFrame(summary_data)
-    
-    # Style the summary statistics
-    summary_styler = summary_stats.style.set_properties(**{
-        'background-color': '#f8f9fa',
-        'color': '#333333',
-        'border': '1px solid #dee2e6',
-        'padding': '12px'
-    }).set_table_styles([
-        {'selector': 'thead th', 
-         'props': [('background-color', '#2c3e50'), 
-                  ('color', 'white'),
-                  ('font-weight', 'bold'),
-                  ('padding', '12px')]},
-        {'selector': 'tbody tr:nth-of-type(even)',
-         'props': [('background-color', '#ffffff')]}
-    ])
-    
-    st.dataframe(summary_styler, use_container_width=True)
+    st.dataframe(summary_stats, use_container_width=True)
 
     # Enhanced OpenAI insights
     st.subheader("Strategic Insights")
@@ -364,18 +327,15 @@ try:
             
             try:
                 response = openai.ChatCompletion.create(
-                    model="gpt-4o",
+                    model="gpt-4",
                     messages=[
                         {"role": "system", "content": "You are an SEO analyst providing concise, data-driven keyword opportunities and brief domain performance summaries."},
                         {"role": "user", "content": summary_prompt}
                     ],
                     temperature=0.5,
-                    max_tokens=5000
+                    max_tokens=1000
                 )
                 insights = response.choices[0].message.content
-                
-                # Format and display insights
-                st.markdown("## Keyword Opportunities and Domain Analysis")
                 st.markdown(insights)
                 
                 # Add download button for insights
