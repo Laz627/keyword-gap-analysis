@@ -268,70 +268,91 @@ if uploaded_files and target_domain:
     
     st.dataframe(summary_stats, use_container_width=True)
 
-    # Enhanced OpenAI insights
+# Enhanced OpenAI insights
     st.subheader("Strategic Insights")
     api_key = st.sidebar.text_input("Enter your OpenAI API key", type="password")
     if api_key:
         if st.button("Generate Strategic Insights"):
             openai.api_key = api_key
             
-            # Prepare keyword opportunities sorted by search volume
-            defend_keywords = filtered_df[filtered_df['Recommendation'] == 'Defend'].sort_values(
-                by='Search Volume', ascending=False).head(20)
-            optimize_keywords = filtered_df[filtered_df['Recommendation'] == 'Optimize'].sort_values(
-                by='Search Volume', ascending=False).head(20)
-            create_keywords = filtered_df[filtered_df['Recommendation'] == 'Create New'].sort_values(
-                by='Search Volume', ascending=False).head(20)
+            # Get top 20 keywords by search volume for target domain and competitors
+            def get_top_keywords(df, rank_column, max_rank=100):
+                return df[df[rank_column] != 100].sort_values(
+                    by='Search Volume', ascending=False
+                ).head(20)[['Keyword', 'Search Volume', rank_column]].to_dict('records')
+            
+            # Target domain top keywords
+            target_top_keywords = get_top_keywords(filtered_df, 'Target Rank')
+            
+            # Competitor top keywords
+            competitor_keywords = {}
+            for i in range(1, len(data_frames)):
+                comp_col = f'Competitor {i} Rank'
+                if comp_col in filtered_df.columns:
+                    competitor_keywords[f'Competitor {i}'] = get_top_keywords(filtered_df, comp_col)
             
             # Format keyword data for the prompt
-            def format_keyword_list(df):
-                return df.apply(lambda row: f"- {row['Keyword']} (Search Volume: {row['Search Volume']:,.0f}, Rank: {row['Target Rank']})", axis=1).to_list()
-            
-            defend_list = format_keyword_list(defend_keywords)
-            optimize_list = format_keyword_list(optimize_keywords)
-            create_list = format_keyword_list(create_keywords)
+            def format_keyword_list(keywords):
+                return "\n".join([
+                    f"- {kw['Keyword']} "
+                    f"(Search Volume: {kw['Search Volume']:,}, "
+                    f"Rank: {list(kw.values())[2]})"
+                    for kw in keywords
+                ])
             
             summary_prompt = f"""
-            Analyze the keyword data for {target_domain} and provide:
+            Analyze the top-performing keywords (by search volume) for {target_domain} and competitors:
 
-            1. HIGH-VALUE KEYWORD OPPORTUNITIES (Top 20 by search volume):
+            1. {target_domain} TOP 20 RANKINGS:
+            {format_keyword_list(target_top_keywords)}
 
-            DEFEND - Current Strong Rankings:
-            {'\n'.join(defend_list)}
-
-            OPTIMIZE - Priority Improvement Targets:
-            {'\n'.join(optimize_list)}
-
-            CREATE NEW - Highest Potential Unranked Keywords:
-            {'\n'.join(create_list)}
-
-            2. QUICK DOMAIN STRENGTHS:
-            - {target_domain}: [One sentence on key ranking strengths]
-            - Competitor 1: [One sentence on key ranking strengths]
-            - Competitor 2: [One sentence on key ranking strengths]
-
-            Format the output as clear sections with bullet points.
+            2. COMPETITOR RANKINGS:
+            """
+            
+            # Add competitor sections to prompt
+            for comp_name, comp_keywords in competitor_keywords.items():
+                summary_prompt += f"\n\n{comp_name} TOP 20 RANKINGS:\n"
+                summary_prompt += format_keyword_list(comp_keywords)
+            
+            summary_prompt += """
+            
+            Please provide:
+            1. KEY INSIGHTS FOR EACH DOMAIN:
+            - Identify each domain's strongest keyword themes
+            - Note any unique high-value keywords
+            - Highlight competitive advantages in specific areas
+            
+            2. COMPETITIVE GAP ANALYSIS:
+            - Identify valuable keywords where competitors rank but target domain doesn't
+            - Highlight opportunities where target domain can improve existing rankings
+            - Note any patterns in competitor keyword strategies
+            
+            Format the output with clear headers and bullet points.
             Focus on search volume and ranking positions in your analysis.
+            Prioritize actionable insights based on search volume and ranking patterns.
             """
             
             try:
                 response = openai.ChatCompletion.create(
-                    model="gpt-4",
+                    model="gpt-4o",
                     messages=[
-                        {"role": "system", "content": "You are an SEO analyst providing concise, data-driven keyword opportunities and brief domain performance summaries."},
+                        {"role": "system", "content": "You are an SEO analyst providing concise, data-driven keyword analysis with a focus on competitive advantages and opportunities."},
                         {"role": "user", "content": summary_prompt}
                     ],
-                    temperature=0.5,
-                    max_tokens=1000
+                    temperature=0.6,
+                    max_tokens=2000
                 )
                 insights = response.choices[0].message.content
+                
+                # Format and display insights with Streamlit
+                st.markdown("## Keyword Performance Analysis")
                 st.markdown(insights)
                 
                 # Add download button for insights
                 st.download_button(
                     label="Download Insights",
                     data=insights,
-                    file_name="seo_insights.txt",
+                    file_name="keyword_analysis.txt",
                     mime="text/plain"
                 )
             except Exception as e:
