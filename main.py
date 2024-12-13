@@ -409,29 +409,13 @@ if uploaded_files and target_domain:
             for ws in [rankings_ws, summary_ws, top_kw_ws]:
                 apply_basic_styling(ws)
             
-            # Rankings sheet specific styling
+# Rankings sheet specific styling
             rank_columns = [col for col in filtered_df.columns if 'Rank' in col]
             for col in rank_columns:
                 col_idx = filtered_df.columns.get_loc(col) + 1
                 col_letter = openpyxl.utils.get_column_letter(col_idx)
                 
-                # Add color scale for ranks 1-99
-                rankings_ws.conditional_formatting.add(
-                    f'{col_letter}2:{col_letter}{len(filtered_df) + 1}',
-                    ColorScaleRule(
-                        start_type='num',
-                        start_value=1,
-                        start_color='63BE7B',  # Green
-                        mid_type='num',
-                        mid_value=15,
-                        mid_color='FFEB84',  # Yellow
-                        end_type='num',
-                        end_value=99,
-                        end_color='F8696B'  # Red
-                    )
-                )
-                
-                # Add light gray for rank 100
+                # First add light gray for rank 100 (this should be applied first)
                 rankings_ws.conditional_formatting.add(
                     f'{col_letter}2:{col_letter}{len(filtered_df) + 1}',
                     CellIsRule(
@@ -441,6 +425,28 @@ if uploaded_files and target_domain:
                         fill=PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
                     )
                 )
+                
+                # Then add color scale only for ranks 1-99
+                rankings_ws.conditional_formatting.add(
+                    f'{col_letter}2:{col_letter}{len(filtered_df) + 1}',
+                    ColorScaleRule(
+                        start_type='percentile',
+                        start_value=0,
+                        start_color='63BE7B',  # Green
+                        mid_type='percentile',
+                        mid_value=50,
+                        mid_color='FFEB84',  # Yellow
+                        end_type='percentile',
+                        end_value=100,
+                        end_color='F8696B',  # Red
+                    )
+                )
+
+                # Add number formatting
+                for cell in rankings_ws[col_letter][1:]:
+                    cell.number_format = '0'
+                    if cell.value == 100:
+                        cell.fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
             
             # Format numbers in all sheets
             for ws in [rankings_ws, summary_ws, top_kw_ws]:
