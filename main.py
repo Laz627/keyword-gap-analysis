@@ -134,6 +134,8 @@ def generate_recommendations(row):
         if target_rank > best_competitor_rank:  # If any competitor ranks better
             if target_rank <= 20:
                 return "Optimize"
+            elif target_rank <= 50:
+                return "Larger Adjustments"
             else:
                 return "Create New"
         else:
@@ -142,23 +144,26 @@ def generate_recommendations(row):
         return "Defend"
 
 def get_top_keywords_by_category(df, domain_type='target'):
-    """Get top 20 keywords by search volume for each category"""
+    """Get top 50 keywords by search volume for each category"""
     if domain_type == 'target':
         defend_kw = df[df['Recommendation'] == 'Defend'].sort_values(
-            by='Search Volume', ascending=False).head(20)[['Keyword', 'Search Volume', 'Target Rank']]
+            by='Search Volume', ascending=False).head(50)[['Keyword', 'Search Volume', 'Target Rank']]
         optimize_kw = df[df['Recommendation'] == 'Optimize'].sort_values(
-            by='Search Volume', ascending=False).head(20)[['Keyword', 'Search Volume', 'Target Rank']]
+            by='Search Volume', ascending=False).head(50)[['Keyword', 'Search Volume', 'Target Rank']]
+        larger_adjust_kw = df[df['Recommendation'] == 'Larger Adjustments'].sort_values(
+            by='Search Volume', ascending=False).head(50)[['Keyword', 'Search Volume', 'Target Rank']]
         create_kw = df[df['Recommendation'] == 'Create New'].sort_values(
-            by='Search Volume', ascending=False).head(20)[['Keyword', 'Search Volume', 'Target Rank']]
+            by='Search Volume', ascending=False).head(50)[['Keyword', 'Search Volume', 'Target Rank']]
         return {
             'Defend Keywords': defend_kw,
             'Optimize Keywords': optimize_kw,
+            'Larger Adjustments Keywords': larger_adjust_kw,
             'Create New Keywords': create_kw
         }
     else:
-        # For competitors, just get top 20 overall
+        # For competitors, get top 50 overall
         return df[df[f'{domain_type} Rank'] != 100].sort_values(
-            by='Search Volume', ascending=False).head(20)[['Keyword', 'Search Volume', f'{domain_type} Rank']]
+            by='Search Volume', ascending=False).head(50)[['Keyword', 'Search Volume', f'{domain_type} Rank']]
 
 if uploaded_files and target_domain:
     # Process the uploaded files
@@ -175,7 +180,7 @@ if uploaded_files and target_domain:
     with col2:
         recommendation_filter = st.selectbox(
             "Filter by recommendation:",
-            ["All", "Defend", "Optimize", "Create New"]
+            ["All", "Defend", "Optimize", "Larger Adjustments", "Create New"]
         )
     
     filtered_df = merged_df.copy()
@@ -257,6 +262,7 @@ if uploaded_files and target_domain:
             'Not Ranking (N/A)',
             'Defend Keywords',
             'Optimize Keywords',
+            'Larger Adjustments Keywords',
             'Create New Keywords'
         ],
         'Target': [
@@ -266,6 +272,7 @@ if uploaded_files and target_domain:
             len(filtered_df[filtered_df['Target Rank'] == 100]),
             len(filtered_df[filtered_df['Recommendation'] == 'Defend']),
             len(filtered_df[filtered_df['Recommendation'] == 'Optimize']),
+            len(filtered_df[filtered_df['Recommendation'] == 'Larger Adjustments']),
             len(filtered_df[filtered_df['Recommendation'] == 'Create New'])
         ]
     })
