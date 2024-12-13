@@ -118,8 +118,8 @@ def calculate_average_rank(series):
     valid_ranks = series[series != 100]
     if len(valid_ranks) == 0:
         return "N/A"
-    return round(valid_ranks.mean(), 2)
-
+    return int(round(valid_ranks.mean(), 0))  # Round to whole number
+    
 def generate_recommendations(row):
     """Generate recommendations based on ranking positions"""
     target_rank = row['Target Rank']
@@ -283,10 +283,14 @@ if uploaded_files and target_domain:
                 '-'
             ]
     
-    # Style the summary statistics
+# Style the summary statistics
     summary_styler = summary_stats.style.set_properties(**{
         'text-align': 'left',
         'padding': '12px'
+    }).format({
+        'Target': lambda x: f"{x:,.0f}" if isinstance(x, (int, float)) else x,
+        **{f'Competitor {i}': lambda x: f"{x:,.0f}" if isinstance(x, (int, float)) else x 
+           for i in range(1, len(data_frames))}
     }).set_table_styles([
         {'selector': 'thead th', 
          'props': [('background-color', '#2c3e50'), 
@@ -330,7 +334,7 @@ if uploaded_files and target_domain:
             # Write summary statistics
             summary_stats.to_excel(writer, index=False, sheet_name="Summary")
             
-            # Get and write top keywords
+            # Get top keywords
             target_top_kw = get_top_keywords_by_category(filtered_df, 'target')
             competitor_top_kw = {}
             for i in range(1, len(data_frames)):
@@ -338,23 +342,35 @@ if uploaded_files and target_domain:
                 if f'{comp_col} Rank' in filtered_df.columns:
                     competitor_top_kw[comp_col] = get_top_keywords_by_category(filtered_df, comp_col)
             
-            # Create Top Keywords sheet
-            with pd.ExcelWriter(buffer, engine="openpyxl", mode='a') as writer:
-                row_position = 0
-                
-                # Write target domain top keywords
-                for category, df in target_top_kw.items():
-                    df.to_excel(writer, sheet_name="Top Keywords", 
-                              startrow=row_position, index=False)
-                    row_position += len(df) + 3  # Add space between categories
-                
-                # Write competitor top keywords
-                for comp_name, comp_df in competitor_top_kw.items():
-                    comp_df.to_excel(writer, sheet_name="Top Keywords", 
-                                   startrow=row_position, index=False)
-                    row_position += len(comp_df) + 3
-
-# Get workbook and worksheets
+            # Prepare top keywords data for single write
+            top_kw_rows = []
+            current_row = 0
+            
+            # Add target domain keywords
+            for category, df in target_top_kw.items():
+                # Add category header
+                top_kw_rows.append(pd.DataFrame({'Category': [category]}))
+                # Add data
+                top_kw_rows.append(df)
+                # Add blank row
+                top_kw_rows.append(pd.DataFrame({'Category': ['']}))
+            
+            # Add competitor keywords
+            for comp_name, comp_df in competitor_top_kw.items():
+                # Add competitor header
+                top_kw_rows.append(pd.DataFrame({'Category': [f"{comp_name} Top Keywords"]}))
+                # Add data
+                top_kw_rows.append(comp_df)
+                # Add blank row
+                top_kw_rows.append(pd.DataFrame({'Category': ['']}))
+            
+            # Combine all top keywords data
+            top_kw_df = pd.concat(top_kw_rows, ignore_index=True)
+            
+            # Write top keywords
+            top_kw_df.to_excel(writer, sheet_name="Top Keywords", index=False)
+            
+            # Get workbook and worksheets
             workbook = writer.book
             rankings_ws = workbook["Rankings"]
             summary_ws = workbook["Summary"]
