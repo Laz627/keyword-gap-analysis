@@ -94,14 +94,17 @@ def process_competitor_data(data_frames, target_domain):
     # Create final DataFrame with desired column order
     final_df = pd.DataFrame()
     final_df['Keyword'] = combined_df['Keyword']
-    final_df['Target Rank'] = pd.to_numeric(target_ranks, errors='coerce').fillna(100).astype(int)
+    
+    # Convert target ranks to pandas Series before processing
+    target_ranks_series = pd.Series(target_ranks)
+    final_df['Target Rank'] = pd.to_numeric(target_ranks_series, errors='coerce').fillna(100).astype(int)
     
     # Add competitor rank columns and convert to whole numbers
     for i in range(len(data_frames) - 1):
         comp_ranks = [ranks[i] if ranks else 100 for ranks in competitor_ranks]
-        # Convert to integers, handling any remaining NaN values
-        comp_ranks = pd.Series(comp_ranks).fillna(100).astype(int)
-        final_df[f'Competitor {i+1} Rank'] = comp_ranks
+        # Convert to pandas Series before processing
+        comp_ranks_series = pd.Series(comp_ranks)
+        final_df[f'Competitor {i+1} Rank'] = pd.to_numeric(comp_ranks_series, errors='coerce').fillna(100).astype(int)
     
     # Add URL columns at the end
     final_df['Target URL'] = target_urls
