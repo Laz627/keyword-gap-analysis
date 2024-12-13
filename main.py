@@ -167,12 +167,11 @@ if uploaded_files and target_domain:
         st.warning("No data to display after applying filters.")
         st.stop()
 
-    # Display the DataFrame with styling
+# Display the DataFrame with styling
     st.subheader("Keyword Rankings Table")
 
-try:
-        # Create a copy for styling
-        display_df = filtered_df.copy()
+    try:
+        display_df = filtered_df.copy()  # Create copy outside the try block
         
         # Create styler object
         styler = display_df.style
@@ -187,7 +186,7 @@ try:
         })
         
         # Apply background gradient only to rank columns (excluding 100s)
-        rank_columns = [col for col in filtered_df.columns if 'Rank' in col]
+        rank_columns = [col for col in display_df.columns if 'Rank' in col]
         for col in rank_columns:
             mask = display_df[col] != 100
             styler.background_gradient(
@@ -222,9 +221,10 @@ try:
         # Display the styled DataFrame
         st.dataframe(styler, use_container_width=True, height=600)
     
-except Exception as e:
-    st.error(f"Error applying styling: {str(e)}")
-    st.dataframe(display_df, use_container_width=True)
+    except Exception as e:
+        st.error(f"Error applying styling: {str(e)}")
+        # Display unstyled DataFrame
+        st.dataframe(filtered_df, use_container_width=True)
 
     # Summary statistics
     st.subheader("Summary Statistics")
