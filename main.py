@@ -144,8 +144,9 @@ def generate_recommendations(row):
         return "Defend"
 
 def get_top_keywords_by_category(df, domain_type='target'):
-    """Get top 50 keywords by search volume for each category"""
+    """Get top 50 keywords sorted by search volume and rank"""
     if domain_type == 'target':
+        # For target domain, sort by search volume within each recommendation category
         defend_kw = df[df['Recommendation'] == 'Defend'].sort_values(
             by='Search Volume', ascending=False).head(50)[['Keyword', 'Search Volume', 'Target Rank']]
         optimize_kw = df[df['Recommendation'] == 'Optimize'].sort_values(
@@ -161,9 +162,12 @@ def get_top_keywords_by_category(df, domain_type='target'):
             'Create New Keywords': create_kw
         }
     else:
-        # For competitors, get top 50 overall
-        return df[df[f'{domain_type} Rank'] != 100].sort_values(
-            by='Search Volume', ascending=False).head(50)[['Keyword', 'Search Volume', f'{domain_type} Rank']]
+        # For competitors, first sort by rank, then by search volume
+        comp_rank_col = f'{domain_type} Rank'
+        return df[df[comp_rank_col] != 100].sort_values(
+            by=[comp_rank_col, 'Search Volume'],  # Sort by rank first, then search volume
+            ascending=[True, False]  # Ascending for rank (better ranks first), descending for search volume
+        ).head(50)[['Keyword', 'Search Volume', comp_rank_col]]
 
 if uploaded_files and target_domain:
     # Process the uploaded files
@@ -353,22 +357,21 @@ if uploaded_files and target_domain:
             
             # Prepare top keywords data for single write
             top_kw_rows = []
-            current_row = 0
             
-            # Add target domain keywords
+            # Add target domain keywords (sorted by search volume)
             for category, df in target_top_kw.items():
                 # Add category header
                 top_kw_rows.append(pd.DataFrame({'Category': [category]}))
-                # Add data
+                # Add data (already sorted by search volume)
                 top_kw_rows.append(df)
                 # Add blank row
                 top_kw_rows.append(pd.DataFrame({'Category': ['']}))
             
-            # Add competitor keywords
+            # Add competitor keywords (sorted by rank, then search volume)
             for comp_name, comp_df in competitor_top_kw.items():
                 # Add competitor header
                 top_kw_rows.append(pd.DataFrame({'Category': [f"{comp_name} Top Keywords"]}))
-                # Add data
+                # Add data (already sorted by rank and search volume)
                 top_kw_rows.append(comp_df)
                 # Add blank row
                 top_kw_rows.append(pd.DataFrame({'Category': ['']}))
