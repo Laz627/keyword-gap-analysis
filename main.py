@@ -14,19 +14,24 @@ target_domain = st.sidebar.text_input("Enter the target domain (e.g., 'pella.com
 
 st.sidebar.header("Data Upload")
 uploaded_files = st.sidebar.file_uploader("Upload CSV Files", type=["csv"], accept_multiple_files=True)
-
 def process_competitor_data(data_frames, target_domain):
     """Process and combine competitor data with specific column ordering"""
     # Initialize empty lists to store all keywords and data
     all_keywords = set()
-    all_data = []
+    search_volumes = {}  # Dictionary to store search volumes
     
-    # Collect all unique keywords
+    # Collect all unique keywords and their search volumes
     for df in data_frames:
+        df.columns = [col.strip() for col in df.columns]
         all_keywords.update(df['Keyword'].unique())
+        # Update search volumes, preferring non-zero values
+        for keyword, volume in zip(df['Keyword'], df['Search Volume']):
+            if keyword not in search_volumes or (volume > 0 and search_volumes[keyword] == 0):
+                search_volumes[keyword] = volume
     
     # Create a base DataFrame with all keywords
     combined_df = pd.DataFrame(list(all_keywords), columns=['Keyword'])
+    combined_df['Search Volume'] = combined_df['Keyword'].map(search_volumes)
     
     # Process each dataframe
     for df in data_frames:
@@ -102,6 +107,8 @@ def process_competitor_data(data_frames, target_domain):
     final_df = pd.DataFrame()
     final_df['Keyword'] = combined_df['Keyword']
     final_df['Search Volume'] = combined_df['Search Volume']
+    final_df['Target Rank'] = pd.to_numeric(target_ranks_series, errors='coerce').fillna(100).astype(int)
+    final_df['Recommendation'] = final_df.apply(generate_recommendations, axis=1)
     
     # Convert target ranks to pandas Series before processing
     target_ranks_series = pd.Series(target_ranks)
@@ -176,7 +183,7 @@ if uploaded_files and target_domain:
     # Display the DataFrame with enhanced styling
     st.subheader("Keyword Rankings Table")
 
-    try:
+try:
         # Create a copy for styling
         display_df = filtered_df.copy()
         
@@ -192,33 +199,36 @@ if uploaded_files and target_domain:
             'text-align': 'left'
         })
         
-        # Style the recommendation column
+        # Style the recommendation column with solid colors
         def recommendation_style(val):
             colors = {
-                'Defend': 'background-color: #90EE90; color: #006400',    # Light green with dark green text
-                'Optimize': 'background-color: #FFD700; color: #8B4513',  # Gold with brown text
-                'Create New': 'background-color: #FFA07A; color: #8B0000' # Light salmon with dark red text
+                'Defend': 'background-color: #90EE90',    # Light green
+                'Optimize': 'background-color: #FFD700',   # Gold
+                'Create New': 'background-color: #FFA07A'  # Light salmon
             }
             return colors.get(val, '')
         
+        # Apply recommendation styling without color scale
         styler.applymap(recommendation_style, subset=['Recommendation'])
         
-        # Apply background gradient to rank columns (excluding 100s)
+        # Apply background gradient only to rank columns (excluding 100s)
         rank_columns = [col for col in filtered_df.columns if 'Rank' in col]
         for col in rank_columns:
             mask = display_df[col] != 100
             styler.background_gradient(
                 cmap='RdYlGn_r',
                 vmin=1,
-                vmax=30,  # Adjusted to make color differences more visible
+                vmax=30,
                 subset=pd.IndexSlice[mask, col],
                 text_color_threshold=0.7
             )
         
-        # Format rank columns as integers and search volume with comma separator
-        rank_format = {col: '{:.0f}' for col in rank_columns}
-        rank_format['Search Volume'] = '{:,.0f}'
-        styler.format(rank_format)
+        # Format columns
+        format_dict = {
+            'Search Volume': '{:,.0f}',  # Add thousands separator
+            **{col: '{:.0f}' for col in rank_columns}  # Format rank columns as integers
+        }
+        styler.format(format_dict)
         
         # Add header styling
         styler.set_table_styles([
@@ -315,11 +325,19 @@ if uploaded_files and target_domain:
             
             # Prepare keyword opportunities sorted by search volume
             defend_keywords = filtered_df[filtered_df['Recommendation'] == 'Defend'].sort_values(
-                by='Search Volume', ascending=False).head(20)[['Keyword', 'Search Volume', 'Target Rank']]
+                by='Search Volume', ascending=False).head(20)
             optimize_keywords = filtered_df[filtered_df['Recommendation'] == 'Optimize'].sort_values(
-                by='Search Volume', ascending=False).head(20)[['Keyword', 'Search Volume', 'Target Rank']]
+                by='Search Volume', ascending=False).head(20)
             create_keywords = filtered_df[filtered_df['Recommendation'] == 'Create New'].sort_values(
-                by='Search Volume', ascending=False).head(20)[['Keyword', 'Search Volume', 'Target Rank']]
+                by='Search Volume', ascending=False).head(20)
+            
+            # Format keyword data for the prompt
+            def format_keyword_list(df):
+                return df.apply(lambda row: f"- {row['Keyword']} (Search Volume: {row['Search Volume']:,.0f}, Rank: {row['Target Rank']})", axis=1).to_list()
+            
+            defend_list = format_keyword_list(defend_keywords)
+            optimize_list = format_keyword_list(optimize_keywords)
+            create_list = format_keyword_list(create_keywords)
             
             summary_prompt = f"""
             Analyze the keyword data for {target_domain} and provide:
@@ -327,13 +345,13 @@ if uploaded_files and target_domain:
             1. HIGH-VALUE KEYWORD OPPORTUNITIES (Top 20 by search volume):
 
             DEFEND - Current Strong Rankings:
-            {defend_keywords.to_string()}
+            {'\n'.join(defend_list)}
 
             OPTIMIZE - Priority Improvement Targets:
-            {optimize_keywords.to_string()}
+            {'\n'.join(optimize_list)}
 
             CREATE NEW - Highest Potential Unranked Keywords:
-            {create_keywords.to_string()}
+            {'\n'.join(create_list)}
 
             2. QUICK DOMAIN STRENGTHS:
             - {target_domain}: [One sentence on key ranking strengths]
