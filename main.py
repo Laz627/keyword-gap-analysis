@@ -19,11 +19,29 @@ target_domain = st.sidebar.text_input("Enter the target domain (e.g., 'pella.com
 st.sidebar.header("Data Upload")
 uploaded_files = st.sidebar.file_uploader("Upload CSV Files", type=["csv"], accept_multiple_files=True)
 
+def extract_domain(url):
+    """Extract domain name from URL"""
+    try:
+        if pd.isna(url) or not url:
+            return None
+        url = url.lower()
+        # Add protocol if not present
+        if not url.startswith(('http://', 'https://')):
+            url = 'https://' + url
+        parsed_url = urlparse(url)
+        domain = parsed_url.netloc
+        if domain.startswith('www.'):
+            domain = domain[4:]
+        return domain
+    except:
+        return url  # Return original if parsing fails
+
 def process_competitor_data(data_frames, target_domain):
     """Process and combine competitor data with specific column ordering"""
     # Initialize empty DataFrame for final results
     all_keywords = set()
     search_volumes = {}
+    domains = {}
     
     # First pass to collect all keywords and search volumes
     for df in data_frames:
@@ -36,75 +54,90 @@ def process_competitor_data(data_frames, target_domain):
     final_df = pd.DataFrame(list(all_keywords), columns=['Keyword'])
     final_df['Search Volume'] = final_df['Keyword'].map(search_volumes)
     
-    # Initialize rank and URL columns
-    final_df['Target Rank'] = 100  # Default value
-    final_df['Target URL'] = None
+    # Initialize target domain columns
+    target_domain_name = target_domain
+    final_df[f'{target_domain_name} Rank'] = 100  # Default value
+    final_df[f'{target_domain_name} URL'] = None
     
     # Process each dataset
     competitor_count = 0
+    competitor_domains = []
     
     for i, df in enumerate(data_frames):
         temp_df = df[['Keyword', 'URL', 'Rank']].copy()
         
+        # Extract domains for all URLs in this dataset
+        domains_in_df = temp_df['URL'].apply(lambda x: extract_domain(x) if pd.notnull(x) else None)
+        unique_domains = domains_in_df.dropna().unique()
+        
         # Check if this dataset contains the target domain
-        contains_target = temp_df['URL'].apply(lambda x: target_domain.lower() in str(x).lower() if pd.notnull(x) else False)
+        contains_target = domains_in_df.apply(lambda x: target_domain.lower() in str(x).lower() if pd.notnull(x) else False)
         
         if contains_target.any():
-            # This is the target dataset
+            # This contains target domain data
             target_data = temp_df[contains_target].copy()
+            
+            # Use the actual domain name for the column
+            target_domain_name = target_domain
+            
             final_df = final_df.merge(
                 target_data[['Keyword', 'Rank', 'URL']], 
                 on='Keyword', 
                 how='left',
                 suffixes=('', '_target')
             )
-            final_df['Target Rank'] = final_df['Rank'].fillna(100)
-            final_df['Target URL'] = final_df['URL']
+            final_df[f'{target_domain_name} Rank'] = final_df['Rank'].fillna(100)
+            final_df[f'{target_domain_name} URL'] = final_df['URL']
             final_df.drop(['Rank', 'URL'], axis=1, inplace=True)
         else:
-            # This is a competitor dataset
-            competitor_count += 1
-            final_df = final_df.merge(
-                temp_df[['Keyword', 'Rank', 'URL']], 
-                on='Keyword', 
-                how='left',
-                suffixes=('', f'_comp{competitor_count}')
-            )
-            final_df[f'Competitor {competitor_count} Rank'] = final_df['Rank'].fillna(100)
-            final_df[f'Competitor {competitor_count} URL'] = final_df['URL']
-            final_df.drop(['Rank', 'URL'], axis=1, inplace=True)
+            # This is competitor data
+            # Find domains that aren't the target
+            competitor_domains_in_df = [d for d in unique_domains if target_domain.lower() not in str(d).lower()]
+            
+            if competitor_domains_in_df:
+                for comp_domain in competitor_domains_in_df:
+                    competitor_count += 1
+                    competitor_domains.append(comp_domain)
+                    
+                    # Filter for rows with this competitor domain
+                    comp_rows = domains_in_df == comp_domain
+                    comp_data = temp_df[comp_rows].copy()
+                    
+                    if not comp_data.empty:
+                        final_df = final_df.merge(
+                            comp_data[['Keyword', 'Rank', 'URL']], 
+                            on='Keyword', 
+                            how='left',
+                            suffixes=('', f'_comp{competitor_count}')
+                        )
+                        final_df[f'{comp_domain} Rank'] = final_df['Rank'].fillna(100)
+                        final_df[f'{comp_domain} URL'] = final_df['URL']
+                        final_df.drop(['Rank', 'URL'], axis=1, inplace=True)
     
-    # Generate recommendations using the original column names
+    # Generate recommendations based on the updated rank thresholds
     def generate_recommendations(row):
-        target_rank = row['Target Rank']
-        competitor_ranks = [row[col] for col in row.index if 'Competitor' in col and 'Rank' in col]
-        competitor_ranks = [r for r in competitor_ranks if r != 100]  # Exclude non-ranking positions
+        target_rank = row[f'{target_domain_name} Rank']
         
-        if target_rank == 100:
-            return "Create New"
-        elif competitor_ranks:  # If there are competing rankings
-            best_competitor_rank = min(competitor_ranks)
-            if target_rank > best_competitor_rank:  # If any competitor ranks better
-                if target_rank <= 20:
-                    return "Optimize"
-                elif target_rank <= 50:
-                    return "Larger Adjustments"
-                else:
-                    return "Create New"
-            else:
-                return "Defend"
-        else:  # If no competitors are ranking
+        if target_rank <= 3:
             return "Defend"
+        elif 4 <= target_rank <= 10:
+            return "Overtake"
+        elif 11 <= target_rank <= 20:
+            return "Optimize"
+        elif 21 <= target_rank <= 40:
+            return "Larger Adjustments"
+        else:  # target_rank > 40 or target_rank == 100
+            return "Create New"
     
     final_df['Recommendation'] = final_df.apply(generate_recommendations, axis=1)
     
     # Reorder columns
-    rank_cols = ['Target Rank'] + [col for col in final_df.columns if 'Competitor' in col and 'Rank' in col]
-    url_cols = ['Target URL'] + [col for col in final_df.columns if 'Competitor' in col and 'URL' in col]
+    rank_cols = [f'{target_domain_name} Rank'] + [f'{domain} Rank' for domain in competitor_domains]
+    url_cols = [f'{target_domain_name} URL'] + [f'{domain} URL' for domain in competitor_domains]
     
     final_df = final_df[['Keyword', 'Recommendation', 'Search Volume'] + rank_cols + url_cols]
     
-    return final_df
+    return final_df, target_domain_name, competitor_domains
 
 def calculate_average_rank(series):
     """Calculate average rank excluding 100 values (which represent N/A)"""
@@ -112,54 +145,31 @@ def calculate_average_rank(series):
     if len(valid_ranks) == 0:
         return "N/A"
     return int(round(valid_ranks.mean(), 0))  # Round to whole number
-    
-def generate_recommendations(row, target_domain):
-    """Generate recommendations based on ranking positions"""
-    # Find the target rank column (the one containing the target domain)
-    target_rank_col = next(col for col in row.index if 'Rank' in col and target_domain.lower() in col.lower())
-    competitor_rank_cols = [col for col in row.index if 'Rank' in col and target_domain.lower() not in col.lower()]
-    
-    target_rank = row[target_rank_col]
-    competitor_ranks = [row[col] for col in competitor_rank_cols]
-    competitor_ranks = [r for r in competitor_ranks if r != 100]  # Exclude non-ranking positions
-    
-    if target_rank == 100:
-        return "Create New"
-    elif competitor_ranks:  # If there are competing rankings
-        best_competitor_rank = min(competitor_ranks)
-        if target_rank > best_competitor_rank:  # If any competitor ranks better
-            if target_rank <= 20:
-                return "Optimize"
-            elif target_rank <= 50:
-                return "Larger Adjustments"
-            else:
-                return "Create New"
-        else:
-            return "Defend"
-    else:  # If no competitors are ranking
-        return "Defend"
 
-def get_top_keywords_by_category(df, domain_type='target'):
+def get_top_keywords_by_category(df, domain, domains_dict):
     """Get top 50 keywords sorted by search volume and rank"""
-    if domain_type == 'target':
+    if domain == domains_dict['target']:
         # For target domain, sort by search volume within each recommendation category
         defend_kw = df[df['Recommendation'] == 'Defend'].sort_values(
-            by='Search Volume', ascending=False).head(50)[['Keyword', 'Search Volume', 'Target Rank']]
+            by='Search Volume', ascending=False).head(50)[['Keyword', 'Search Volume', f'{domain} Rank']]
+        overtake_kw = df[df['Recommendation'] == 'Overtake'].sort_values(
+            by='Search Volume', ascending=False).head(50)[['Keyword', 'Search Volume', f'{domain} Rank']]
         optimize_kw = df[df['Recommendation'] == 'Optimize'].sort_values(
-            by='Search Volume', ascending=False).head(50)[['Keyword', 'Search Volume', 'Target Rank']]
+            by='Search Volume', ascending=False).head(50)[['Keyword', 'Search Volume', f'{domain} Rank']]
         larger_adjust_kw = df[df['Recommendation'] == 'Larger Adjustments'].sort_values(
-            by='Search Volume', ascending=False).head(50)[['Keyword', 'Search Volume', 'Target Rank']]
+            by='Search Volume', ascending=False).head(50)[['Keyword', 'Search Volume', f'{domain} Rank']]
         create_kw = df[df['Recommendation'] == 'Create New'].sort_values(
-            by='Search Volume', ascending=False).head(50)[['Keyword', 'Search Volume', 'Target Rank']]
+            by='Search Volume', ascending=False).head(50)[['Keyword', 'Search Volume', f'{domain} Rank']]
         return {
             'Defend Keywords': defend_kw,
+            'Overtake Keywords': overtake_kw,
             'Optimize Keywords': optimize_kw,
             'Larger Adjustments Keywords': larger_adjust_kw,
             'Create New Keywords': create_kw
         }
     else:
         # For competitors, first sort by rank, then by search volume
-        comp_rank_col = f'{domain_type} Rank'
+        comp_rank_col = f'{domain} Rank'
         return df[df[comp_rank_col] != 100].sort_values(
             by=[comp_rank_col, 'Search Volume'],  # Sort by rank first, then search volume
             ascending=[True, False]  # Ascending for rank (better ranks first), descending for search volume
@@ -170,7 +180,13 @@ if uploaded_files and target_domain:
     data_frames = [pd.read_csv(file) for file in uploaded_files]
     
     # Combine competitor data side by side
-    merged_df = process_competitor_data(data_frames, target_domain)
+    merged_df, target_domain_name, competitor_domains = process_competitor_data(data_frames, target_domain)
+    
+    # Create domains dictionary for reference
+    domains_dict = {
+        'target': target_domain_name,
+        'competitors': competitor_domains
+    }
     
     # Display filters
     st.subheader("Filters")
@@ -180,7 +196,7 @@ if uploaded_files and target_domain:
     with col2:
         recommendation_filter = st.selectbox(
             "Filter by recommendation:",
-            ["All", "Defend", "Optimize", "Larger Adjustments", "Create New"]
+            ["All", "Defend", "Overtake", "Optimize", "Larger Adjustments", "Create New"]
         )
     
     filtered_df = merged_df.copy()
@@ -254,70 +270,67 @@ if uploaded_files and target_domain:
 
     # Summary statistics
     st.subheader("Summary Statistics")
-    summary_stats = pd.DataFrame({
-        'Metric': [
-            'Average Rank (excluding N/A)', 
-            'Keywords in Top 10',
-            'Keywords in Top 3',
-            'Not Ranking (N/A)',
-            'Defend Keywords',
-            'Optimize Keywords',
-            'Larger Adjustments Keywords',
-            'Create New Keywords'
-        ],
-        'Target': [
-            calculate_average_rank(filtered_df['Target Rank']),
-            len(filtered_df[filtered_df['Target Rank'] <= 10]),
-            len(filtered_df[filtered_df['Target Rank'] <= 3]),
-            len(filtered_df[filtered_df['Target Rank'] == 100]),
-            len(filtered_df[filtered_df['Recommendation'] == 'Defend']),
-            len(filtered_df[filtered_df['Recommendation'] == 'Optimize']),
-            len(filtered_df[filtered_df['Recommendation'] == 'Larger Adjustments']),
-            len(filtered_df[filtered_df['Recommendation'] == 'Create New'])
+    
+    # Create list of metrics
+    metrics = [
+        'Average Rank (excluding N/A)', 
+        'Keywords in Top 10',
+        'Keywords in Top 3',
+        'Not Ranking (N/A)',
+        'Defend Keywords',
+        'Overtake Keywords',
+        'Optimize Keywords',
+        'Larger Adjustments Keywords',
+        'Create New Keywords'
+    ]
+    
+    # Create summary stats for target domain
+    target_stats = [
+        calculate_average_rank(filtered_df[f'{target_domain_name} Rank']),
+        len(filtered_df[filtered_df[f'{target_domain_name} Rank'] <= 10]),
+        len(filtered_df[filtered_df[f'{target_domain_name} Rank'] <= 3]),
+        len(filtered_df[filtered_df[f'{target_domain_name} Rank'] == 100]),
+        len(filtered_df[filtered_df['Recommendation'] == 'Defend']),
+        len(filtered_df[filtered_df['Recommendation'] == 'Overtake']),
+        len(filtered_df[filtered_df['Recommendation'] == 'Optimize']),
+        len(filtered_df[filtered_df['Recommendation'] == 'Larger Adjustments']),
+        len(filtered_df[filtered_df['Recommendation'] == 'Create New'])
+    ]
+    
+    # Initialize competitor stats
+    competitor_stats = {}
+    for comp_domain in competitor_domains:
+        comp_col = f'{comp_domain} Rank'
+        competitor_stats[comp_domain] = [
+            calculate_average_rank(filtered_df[comp_col]),
+            len(filtered_df[filtered_df[comp_col] <= 10]),
+            len(filtered_df[filtered_df[comp_col] <= 3]),
+            len(filtered_df[filtered_df[comp_col] == 100]),
+            "N/A",  # Use "N/A" instead of "-" to avoid type conversion issues
+            "N/A", 
+            "N/A", 
+            "N/A", 
+            "N/A"
         ]
-    })
     
-    # Add competitor metrics
-    for i in range(1, len(data_frames)):
-        comp_col = f'Competitor {i} Rank'
-        if comp_col in filtered_df.columns:
-            summary_stats[f'Competitor {i}'] = [
-                calculate_average_rank(filtered_df[comp_col]),
-                len(filtered_df[filtered_df[comp_col] <= 10]),
-                len(filtered_df[filtered_df[comp_col] <= 3]),
-                len(filtered_df[filtered_df[comp_col] == 100]),
-                '-',  # Defend Keywords
-                '-',  # Optimize Keywords
-                '-',  # Larger Adjustments Keywords
-                '-'   # Create New Keywords
-            ]
+    # Build summary DataFrame
+    summary_data = {
+        'Metric': metrics,
+        target_domain_name: target_stats
+    }
+    for comp_domain, stats in competitor_stats.items():
+        summary_data[comp_domain] = stats
     
-# Style the summary statistics
-    summary_styler = summary_stats.style.set_properties(**{
-        'text-align': 'left',
-        'padding': '12px'
-    }).format({
-        'Target': lambda x: f"{x:,.0f}" if isinstance(x, (int, float)) else x,
-        **{f'Competitor {i}': lambda x: f"{x:,.0f}" if isinstance(x, (int, float)) else x 
-           for i in range(1, len(data_frames))}
-    }).set_table_styles([
-        {'selector': 'thead th', 
-         'props': [('background-color', '#2c3e50'), 
-                  ('color', 'white'),
-                  ('font-weight', 'bold'),
-                  ('padding', '12px'),
-                  ('text-align', 'left')]},
-        {'selector': 'tbody tr:nth-of-type(even)',
-         'props': [('background-color', '#f8f9fa')]}
-    ])
+    summary_stats = pd.DataFrame(summary_data)
     
-    st.dataframe(summary_styler, use_container_width=True)
+    # Style the summary statistics
+    st.dataframe(summary_stats, use_container_width=True)
 
     # Display top keywords
     st.subheader("Top Keywords by Search Volume")
     
     # Get top keywords for target domain
-    target_top_kw = get_top_keywords_by_category(filtered_df, 'target')
+    target_top_kw = get_top_keywords_by_category(filtered_df, target_domain_name, domains_dict)
     
     # Display target domain top keywords by category
     for category, df in target_top_kw.items():
@@ -325,11 +338,10 @@ if uploaded_files and target_domain:
         st.dataframe(df, use_container_width=True)
     
     # Get and display competitor top keywords
-    for i in range(1, len(data_frames)):
-        comp_col = f'Competitor {i}'
-        if f'{comp_col} Rank' in filtered_df.columns:
-            st.write(f"\n{comp_col} Top Keywords:")
-            comp_top_kw = get_top_keywords_by_category(filtered_df, comp_col)
+    for comp_domain in competitor_domains:
+        if f'{comp_domain} Rank' in filtered_df.columns:
+            st.write(f"\n{comp_domain} Top Keywords:")
+            comp_top_kw = get_top_keywords_by_category(filtered_df, comp_domain, domains_dict)
             st.dataframe(comp_top_kw, use_container_width=True)
 
     # Export to Excel
@@ -344,12 +356,11 @@ if uploaded_files and target_domain:
             summary_stats.to_excel(writer, index=False, sheet_name="Summary")
             
             # Get top keywords
-            target_top_kw = get_top_keywords_by_category(filtered_df, 'target')
+            target_top_kw = get_top_keywords_by_category(filtered_df, target_domain_name, domains_dict)
             competitor_top_kw = {}
-            for i in range(1, len(data_frames)):
-                comp_col = f'Competitor {i}'
-                if f'{comp_col} Rank' in filtered_df.columns:
-                    competitor_top_kw[comp_col] = get_top_keywords_by_category(filtered_df, comp_col)
+            for comp_domain in competitor_domains:
+                if f'{comp_domain} Rank' in filtered_df.columns:
+                    competitor_top_kw[comp_domain] = get_top_keywords_by_category(filtered_df, comp_domain, domains_dict)
             
             # Prepare top keywords data for single write
             top_kw_rows = []
